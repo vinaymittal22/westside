@@ -53,7 +53,7 @@ Without this, the AI chat will not work. In Vercel:
 
 | Name | Value |
 |------|-------|
-| `ANTHROPIC_API_KEY` | `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` |
+| `ANTHROPIC_API_KEY` | `YOUR_ACTUAL_KEY_HERE` (copy from your .env.local file) |
 
 3. Set it for **Production**, **Preview**, and **Development**
 4. Click **"Save"**
