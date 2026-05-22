@@ -7,6 +7,7 @@ import {
   Heart, ShoppingBag, Check, Plus, Menu, X, Sparkles, User,
   GraduationCap, Briefcase, Plane, PartyPopper, Coffee, Music,
   Minus, Building2, Flower2, Cloud, Star, Sun, Moon, Flame,
+  Camera, ImageIcon, XCircle,
 } from "lucide-react";
 import { useCart } from "@/context/CartContext";
 import { useWishlist } from "@/context/WishlistContext";
@@ -268,7 +269,29 @@ interface ReplaceOptionsData {
   next_question?: string;
 }
 
-type ParsedResponse = ChatData | OutfitData | MultiData | ProductsData | ReplaceOptionsData;
+interface ImageAnalysisInfo {
+  category: string;
+  color: string;
+  pattern: string;
+  style_type: string;
+  material: string;
+  fit: string;
+  gender: string;
+  season: string;
+  aesthetic: string;
+  description: string;
+}
+
+interface ImageLooksData {
+  type: "image_looks";
+  message: string;
+  analysis: ImageAnalysisInfo;
+  looks: LookEntry[];
+  similar_products?: ProductsApiItem[];
+  next_question?: string;
+}
+
+type ParsedResponse = ChatData | OutfitData | MultiData | ProductsData | ReplaceOptionsData | ImageLooksData;
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -922,6 +945,151 @@ function FollowUpChips({ onQuickReply }: { onQuickReply: (t: string) => void }) 
   );
 }
 
+/* ── Analysis badges — show what AI detected from the image ─────── */
+function AnalysisBadges({ analysis }: { analysis: ImageAnalysisInfo }) {
+  const badges = [
+    { label: analysis.category, icon: "📦" },
+    { label: analysis.color, icon: "🎨" },
+    { label: analysis.pattern, icon: "🔲" },
+    { label: analysis.style_type, icon: "✨" },
+    { label: analysis.material, icon: "🧵" },
+    { label: analysis.fit, icon: "📐" },
+    { label: analysis.season, icon: "🌤️" },
+  ].filter(b => b.label && b.label !== "unknown");
+
+  return (
+    <div style={{
+      display: "flex", flexWrap: "wrap", gap: 5, padding: "10px 0",
+    }}>
+      {badges.map((b, i) => (
+        <span key={i} style={{
+          background: "#FFFFFF", border: `1px solid ${BORDER}`,
+          borderRadius: 20, padding: "4px 10px",
+          fontSize: 10, color: TEXT, fontWeight: 600,
+          fontFamily: "'JetBrains Mono','Courier New',monospace",
+          letterSpacing: 0.8,
+          display: "flex", alignItems: "center", gap: 4,
+        }}>
+          <span style={{ fontSize: 11 }}>{b.icon}</span>
+          {b.label.toUpperCase()}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ── Image Looks renderer — shows AI analysis + multiple styled looks ── */
+function ImageLooksRenderer({ data, onQuickReply }: { data: ImageLooksData; onQuickReply: (t: string) => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Stylist message */}
+      <div style={{
+        background: "linear-gradient(135deg, #fff7ed 0%, #fef3f2 100%)",
+        border: `1px solid ${BORDER}`,
+        borderRadius: 14, padding: "14px 18px",
+        color: TEXT, fontSize: 14, lineHeight: 1.75,
+        boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <Camera size={16} color={TEXT} />
+          <span style={{
+            fontFamily: "'JetBrains Mono','Courier New',monospace",
+            fontSize: 9, fontWeight: 900, letterSpacing: 2.5, color: MUTED,
+          }}>IMAGE ANALYSIS</span>
+        </div>
+        {data.message}
+      </div>
+
+      {/* Analysis badges */}
+      {data.analysis && <AnalysisBadges analysis={data.analysis} />}
+
+      {/* Detected product description */}
+      {data.analysis?.description && (
+        <div style={{
+          color: MUTED, fontSize: 12, fontStyle: "italic",
+          padding: "6px 14px", borderLeft: `3px solid ${BORDER}`, lineHeight: 1.6,
+        }}>
+          Detected: {data.analysis.description}
+        </div>
+      )}
+
+      {/* Section divider */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flex: 1, height: 1, background: BORDER }} />
+        <span style={{ color: MUTED, fontSize: 9, fontWeight: 900, letterSpacing: 3, fontFamily: "'Courier New',monospace" }}>
+          STYLED LOOKS FOR YOU
+        </span>
+        <div style={{ flex: 1, height: 1, background: BORDER }} />
+      </div>
+
+      {/* Outfit looks */}
+      {data.looks?.map((look, i) => (
+        <OutfitBlock
+          key={i}
+          outfit={look.outfit}
+          occasion={look.occasion}
+          vibe={look.vibe}
+          total={look.total}
+          budget_note={look.budget_note}
+          label={look.label}
+          style_notes={look.style_notes}
+          lookNumber={look.look_number}
+        />
+      ))}
+
+      {/* Similar products section */}
+      {data.similar_products && data.similar_products.length > 0 && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+            <div style={{ flex: 1, height: 1, background: BORDER }} />
+            <span style={{ color: MUTED, fontSize: 9, fontWeight: 900, letterSpacing: 3, fontFamily: "'Courier New',monospace" }}>
+              SIMILAR IN OUR STORE
+            </span>
+            <div style={{ flex: 1, height: 1, background: BORDER }} />
+          </div>
+          <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(${Math.min(data.similar_products.length, 4)}, minmax(140px, 1fr))`,
+              gap: 8,
+              minWidth: Math.min(data.similar_products.length, 4) * 148,
+            }}>
+              {data.similar_products.slice(0, 4).map((p) => (
+                <CompactCard
+                  key={p.sku}
+                  section={
+                    p.category?.toLowerCase().includes("footwear") ? "footwear"
+                    : p.category?.toLowerCase().includes("dress") ? "dress"
+                    : p.category?.toLowerCase().includes("bottom") || p.category?.toLowerCase().includes("denim") || p.category?.toLowerCase().includes("skirt") ? "bottom"
+                    : p.category?.toLowerCase().includes("accessor") ? "necklace"
+                    : "top"
+                  }
+                  item={{
+                    sku: p.sku, name: p.name, price: p.price,
+                    note: "", emoji: "✨",
+                    url: p.url, img: p.img,
+                    colors: p.colors, color_family: p.color_family,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Follow-up question */}
+      {data.next_question && (
+        <div style={{
+          color: MUTED, fontSize: 12, fontStyle: "italic",
+          padding: "8px 14px", borderLeft: `3px solid ${BORDER}`, lineHeight: 1.6,
+        }}>{data.next_question}</div>
+      )}
+
+      <FollowUpChips onQuickReply={onQuickReply} />
+    </div>
+  );
+}
+
 function OutfitRenderer({ data, onQuickReply }: { data: OutfitData; onQuickReply: (t: string) => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1341,6 +1509,7 @@ function ResponseRenderer({ data, onQuickReply, onSelectReplacement }: {
   onSelectReplacement: (slot: string, sku: string, name: string) => void;
 }) {
   if (data.type === "chat") return <ChatBubble data={data} onQuickReply={onQuickReply} />;
+  if (data.type === "image_looks") return <ImageLooksRenderer data={data} onQuickReply={onQuickReply} />;
   if (data.type === "multi") return <MultiRenderer data={data} onQuickReply={onQuickReply} />;
   if (data.type === "products") return <ProductsRenderer data={data as ProductsData} onQuickReply={onQuickReply} />;
   if (data.type === "replace_options") return <ReplaceOptionsRenderer data={data} onQuickReply={onQuickReply} onSelectReplacement={onSelectReplacement} />;
@@ -1465,10 +1634,13 @@ export default function LookbookChat() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeOccasion, setActiveOccasion] = useState<string | null>(null);
   const [activeVibe, setActiveVibe] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<{ base64: string; mime: string } | null>(null);
   const { totalItems: cartCount } = useCart();
   const { totalItems: wishCount } = useWishlist();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* Persist chat history to localStorage */
   useEffect(() => {
@@ -1507,6 +1679,101 @@ export default function LookbookChat() {
     setSession(entry.session);
     setActiveChatId(entry.id);
     setSidebarOpen(false);
+  }
+
+  /* ── Image upload handling ── */
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Max 10MB
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Image too large — please use an image under 10MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setImagePreview(dataUrl);
+      // Extract base64 and mime
+      const [header, base64] = dataUrl.split(",");
+      const mime = header.match(/data:(.*?);/)?.[1] ?? "image/jpeg";
+      setImageFile({ base64, mime });
+    };
+    reader.readAsDataURL(file);
+    // Reset file input so same file can be re-selected
+    e.target.value = "";
+  }
+
+  function clearImage() {
+    setImagePreview(null);
+    setImageFile(null);
+  }
+
+  async function sendImage() {
+    if (!imageFile || loading) return;
+    const preview = imagePreview;
+    setLoading(true);
+
+    // Show user bubble with image
+    const userMsg: ChatMessage = { role: "user", content: "📸 [Uploaded a product image for styling]" };
+    setMessages(prev => [...prev, userMsg]);
+    clearImage();
+
+    try {
+      const res = await fetch("/api/image-style", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: imageFile.base64,
+          imageMime: imageFile.mime,
+          session,
+        }),
+      });
+      const data = await res.json();
+
+      let parsed: ParsedResponse | null = null;
+      if (data && typeof data.type === "string") {
+        parsed = data as ParsedResponse;
+      }
+      if (!parsed) {
+        const fallback: ChatData = { type: "chat", message: "Couldn't analyze that image — try a clearer photo!" };
+        setMessages(prev => [...prev, { role: "assistant", content: fallback.message, parsed: fallback }]);
+      } else {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: data.message || "",
+          parsed,
+          imagePreview: preview ?? undefined,
+        } as ChatMessage]);
+        if (parsed.type === "image_looks" && parsed.looks?.[0]) {
+          setSession(prev => {
+            const firstLook = parsed!.type === "image_looks" ? (parsed as ImageLooksData).looks[0] : null;
+            if (!firstLook) return prev;
+            const newOutfit: SessionState["currentOutfit"] = {};
+            const outfit = firstLook.outfit ?? {};
+            for (const role of Object.keys(outfit) as Array<keyof OutfitPair>) {
+              const item = outfit[role];
+              if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+            }
+            return {
+              ...prev,
+              currentOutfit: newOutfit,
+              userProfile: {
+                ...prev.userProfile,
+                gender: (parsed as ImageLooksData).analysis?.gender ?? prev.userProfile.gender,
+                occasion: firstLook.occasion ?? prev.userProfile.occasion,
+                vibe: firstLook.vibe ?? prev.userProfile.vibe,
+              },
+            };
+          });
+        }
+      }
+    } catch {
+      const fallback: ChatData = { type: "chat", message: "Couldn't connect — try again!" };
+      setMessages(prev => [...prev, { role: "assistant", content: "", parsed: fallback }]);
+    }
+
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -2069,6 +2336,79 @@ export default function LookbookChat() {
       }}>
         <div className="bt-input-inner" style={{ maxWidth: 900, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
 
+          {/* Hidden file input for image upload */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            onChange={handleImageSelect}
+            style={{ display: "none" }}
+          />
+
+          {/* Image preview — shown above the pill when an image is staged */}
+          {imagePreview && (
+            <div style={{
+              background: CARD, border: `1px solid ${BORDER}`,
+              borderRadius: 16, padding: 12,
+              display: "flex", alignItems: "flex-start", gap: 12,
+              animation: "fadeIn 0.25s ease-out",
+            }}>
+              <div style={{
+                width: 80, height: 80, borderRadius: 10, overflow: "hidden",
+                border: `1px solid ${BORDER}`, flexShrink: 0, position: "relative",
+              }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imagePreview}
+                  alt="Upload preview"
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              </div>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <ImageIcon size={14} color={TEXT} />
+                  <span style={{
+                    fontFamily: FONT_MONO, fontSize: 10, fontWeight: 700,
+                    letterSpacing: 1.5, color: TEXT,
+                  }}>PRODUCT IMAGE READY</span>
+                </div>
+                <span style={{ fontSize: 11, color: MUTED, lineHeight: 1.4 }}>
+                  Toastie will analyze this product and build complete outfit looks from our collection
+                </span>
+                <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                  <button
+                    onClick={sendImage}
+                    disabled={loading}
+                    style={{
+                      background: TEXT, color: BG, border: "none",
+                      borderRadius: 8, padding: "7px 16px",
+                      fontSize: 11, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                      fontFamily: FONT_MONO, letterSpacing: 1,
+                      display: "flex", alignItems: "center", gap: 5,
+                      transition: "opacity 0.2s",
+                      opacity: loading ? 0.5 : 1,
+                    }}
+                  >
+                    <Sparkles size={12} /> STYLE THIS
+                  </button>
+                  <button
+                    onClick={clearImage}
+                    style={{
+                      background: "transparent", color: MUTED,
+                      border: `1px solid ${BORDER}`,
+                      borderRadius: 8, padding: "7px 12px",
+                      fontSize: 11, fontWeight: 600, cursor: "pointer",
+                      fontFamily: FONT_MONO,
+                      display: "flex", alignItems: "center", gap: 4,
+                    }}
+                  >
+                    <XCircle size={12} /> REMOVE
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Pill input */}
           <div className="bt-input-pill" style={{
             display: "flex", alignItems: "center", gap: 12,
@@ -2100,6 +2440,29 @@ export default function LookbookChat() {
                 LIVE STYLIST AI
               </span>
             </div>
+
+            {/* Image upload button */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              aria-label="Upload product image"
+              title="Upload a product image for styling"
+              style={{
+                background: imagePreview ? TEXT : "transparent",
+                color: imagePreview ? BG : MUTED,
+                border: imagePreview ? "none" : `1px solid ${BORDER}`,
+                borderRadius: "50%",
+                width: 34, height: 34, minWidth: 34,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: loading ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
+                flexShrink: 0,
+              }}
+              onMouseEnter={e => { if (!imagePreview) { e.currentTarget.style.borderColor = TEXT; e.currentTarget.style.color = TEXT; }}}
+              onMouseLeave={e => { if (!imagePreview) { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = MUTED; }}}
+            >
+              <Camera size={15} />
+            </button>
 
             {/* Input */}
             <input
@@ -2166,6 +2529,23 @@ export default function LookbookChat() {
                   &ldquo;{prompt}&rdquo;
                 </button>
               ))}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${BORDER}`,
+                  borderRadius: 999,
+                  padding: "6px 14px",
+                  color: MUTED, fontSize: 11,
+                  fontFamily: FONT_BODY,
+                  cursor: "pointer", transition: "all 0.2s",
+                  display: "flex", alignItems: "center", gap: 5,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = TEXT; e.currentTarget.style.color = TEXT; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = MUTED; }}
+              >
+                <Camera size={12} /> Upload a product image
+              </button>
             </div>
           )}
         </div>
