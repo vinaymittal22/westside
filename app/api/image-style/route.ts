@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, hasAnthropicKey } from "@/utils/claudeClient";
 import {
   buildOutfit,
-  buildMultipleOutfits,
-  browseCategory,
   CATALOGUE,
 } from "@/lib/outfitEngine";
 import { explainOutfit } from "@/lib/styleExplainer";
-import { GeneratedOutfit, OutfitContext, EnrichedProduct } from "@/types/fashion";
+import { GeneratedOutfit, OutfitContext, EnrichedProduct, ProductType } from "@/types/fashion";
 
 /* ────────────────────────────────────────────────────────────────
    Types
@@ -28,25 +25,6 @@ interface ImageAnalysis {
   occasion_suggestions: string[];
   description: string;
   stylist_message: string;
-}
-
-/* ────────────────────────────────────────────────────────────────
-   Compact catalogue summary for Claude context
-   (only send what Claude needs to make styling decisions)
-   ──────────────────────────────────────────────────────────────── */
-function buildCatalogueSummary() {
-  return CATALOGUE.map(p => ({
-    id: p.id,
-    name: p.name,
-    category: p.category,
-    product_type: p.product_type,
-    color: Array.isArray(p.color) ? p.color.join(", ") : (p.color ?? ""),
-    color_family: p.color_family,
-    aesthetics: p.aesthetics.join(", "),
-    price: p.price,
-    gender: p.gender ?? "unisex",
-    occasion: Array.isArray(p.occasion) ? p.occasion.join(", ") : (p.occasion ?? ""),
-  }));
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -94,49 +72,80 @@ function outfitToChat(o: GeneratedOutfit) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Claude vision system prompt for image analysis
+   Map uploaded product category → product_type used by the engine
    ──────────────────────────────────────────────────────────────── */
-const IMAGE_ANALYSIS_PROMPT = `You are Toastie — Burnt Toast's AI fashion stylist with expert-level fashion knowledge.
-
-A customer has uploaded an image of a fashion product. Analyze this image deeply and extract every detail a fashion stylist would notice.
-
-Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
-
-{
-  "category": "one of: dress, t-shirt, top, blouse, shirt, jeans, pants, shorts, skirt, shoes, sneakers, heels, sandals, bag, handbag, clutch, jewelry, necklace, earrings, bracelet, sunglasses, watch, hat, jacket, hoodie, sweater",
-  "color": "primary color name (e.g. black, white, red, navy, sage, cream, multi)",
-  "color_family": "one of: neutral, earth, warm-pastel, cool-pastel, bold, jewel-tone, monochrome, multi",
-  "pattern": "one of: solid, floral, striped, printed, textured, checked, abstract, graphic, embroidered, sequined, plain",
-  "style_type": "one of: casual, streetwear, formal, party, ethnic, luxury, minimalist, oversized, vintage, romantic, preppy, athleisure, boho, smart-casual",
-  "material": "best guess: denim, cotton, leather, silk, wool, polyester, linen, knit, chiffon, satin, velvet, canvas, suede, mesh, unknown",
-  "fit": "one of: slim, oversized, regular, loose, cropped, fitted, flowy, structured, relaxed",
-  "gender": "one of: female, male, unisex",
-  "season": "one of: summer, winter, monsoon, all-season, spring, autumn",
-  "aesthetic": "one of: y2k-revival, urban-streetwear, smart-casual, minimal-clean, boho-coastal, preppy-collegiate, athleisure, feminine-romantic",
-  "occasion_suggestions": ["3-4 occasions this works for, e.g. casual-hangout, date-night, college-fest, party, brunch, office, travel"],
-  "description": "One sentence describing the product — be specific about what you see",
-  "stylist_message": "2-3 sentences as a personal stylist reacting to this product. Be warm, enthusiastic, genuine. Mention the vibe it gives and what looks you can build around it. Example: 'Oh I love this — this oversized black tee is giving effortless streetwear energy. Let me build you some killer looks around it from our collection.'"
-}`;
+const CATEGORY_TO_TYPE: Record<string, ProductType> = {
+  "dress": "DRESS", "t-shirt": "TOP", "top": "TOP", "blouse": "TOP",
+  "shirt": "TOP", "jeans": "BOTTOM", "pants": "BOTTOM", "shorts": "BOTTOM",
+  "skirt": "BOTTOM", "shoes": "FOOTWEAR", "sneakers": "FOOTWEAR",
+  "heels": "FOOTWEAR", "sandals": "FOOTWEAR", "bag": "BAG", "handbag": "BAG",
+  "clutch": "BAG", "jewelry": "JEWELRY", "necklace": "JEWELRY",
+  "earrings": "JEWELRY", "bracelet": "JEWELRY", "sunglasses": "EYEWEAR",
+  "watch": "WATCH", "hat": "HAT", "jacket": "TOP", "hoodie": "TOP",
+  "sweater": "TOP",
+};
 
 /* ────────────────────────────────────────────────────────────────
-   Map Claude's analysis → OutfitContext for the engine
+   Map product_type → the outfit slot role(s) it occupies
+   Used to know which roles the anchor item fills and which
+   roles need to be COMPLETED from the store.
    ──────────────────────────────────────────────────────────────── */
-function analysisToContext(analysis: ImageAnalysis): OutfitContext {
-  return {
-    occasion: analysis.occasion_suggestions?.[0] ?? "casual",
-    vibe:     analysis.aesthetic ?? "smart-casual",
-    gender:   (analysis.gender as "female" | "male") ?? "female",
-    preferred_colors: analysis.color ? [analysis.color.toLowerCase()] : undefined,
-  };
+const TYPE_TO_ROLE: Record<string, string> = {
+  "TOP":      "top",
+  "BOTTOM":   "bottom",
+  "DRESS":    "dress",
+  "FOOTWEAR": "footwear",
+  "BAG":      "bag",
+  "JEWELRY":  "necklace",
+  "EYEWEAR":  "sunglasses",
+  "WATCH":    "watch",
+  "HAT":      "hat",
+};
+
+/* ────────────────────────────────────────────────────────────────
+   Roles that the anchor category EXCLUDES from recommendations.
+   e.g. if the anchor is a TOP → don't recommend another top.
+   If anchor is a DRESS → don't recommend top OR bottom (dress covers both).
+   ──────────────────────────────────────────────────────────────── */
+function getExcludedRoles(anchorType: ProductType): string[] {
+  switch (anchorType) {
+    case "TOP":      return ["top"];
+    case "BOTTOM":   return ["bottom"];
+    case "DRESS":    return ["dress", "top", "bottom"];
+    case "FOOTWEAR": return ["footwear"];
+    case "BAG":      return ["bag"];
+    case "JEWELRY":  return ["necklace"];
+    case "EYEWEAR":  return ["sunglasses"];
+    case "WATCH":    return ["watch"];
+    case "HAT":      return ["hat"];
+    default:         return [];
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Build multiple styled looks from the analysis
-   Each look targets a DIFFERENT occasion from the analysis
+   Determine which outfit template to use based on anchor type.
+   If the anchor IS a dress → use the dress template (no top/bottom).
+   If the anchor IS a top → use two-piece but the engine fills only
+     the NON-anchor slots.
    ──────────────────────────────────────────────────────────────── */
-function buildLooksFromAnalysis(analysis: ImageAnalysis): Array<{
+function getTemplateForAnchor(anchorType: ProductType): string {
+  return anchorType === "DRESS" ? "dress" : "two-piece";
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Build outfit-completion looks around the anchor product.
+
+   CRITICAL: The uploaded image IS the anchor. We find the
+   best matching product in our catalogue as a stand-in (since
+   the uploaded item may not be in our store), then build
+   complete outfits AROUND it — never recommending items from
+   the same category as the anchor.
+   ──────────────────────────────────────────────────────────────── */
+function buildCompletionLooks(analysis: ImageAnalysis): Array<{
   look_number: number;
   label: string;
+  anchor_role: string;
+  excluded_roles: string[];
   occasion: string;
   vibe: string;
   outfit: Record<string, unknown>;
@@ -144,10 +153,16 @@ function buildLooksFromAnalysis(analysis: ImageAnalysis): Array<{
   budget_note: string;
   style_notes: ReturnType<typeof explainOutfit>;
 }> {
+  const anchorType = CATEGORY_TO_TYPE[analysis.category.toLowerCase()] ?? "TOP";
+  const anchorRole = TYPE_TO_ROLE[anchorType] ?? "top";
+  const excludedRoles = getExcludedRoles(anchorType);
   const occasions = analysis.occasion_suggestions?.slice(0, 3) ?? ["casual"];
+
   const looks: Array<{
     look_number: number;
     label: string;
+    anchor_role: string;
+    excluded_roles: string[];
     occasion: string;
     vibe: string;
     outfit: Record<string, unknown>;
@@ -156,83 +171,106 @@ function buildLooksFromAnalysis(analysis: ImageAnalysis): Array<{
     style_notes: ReturnType<typeof explainOutfit>;
   }> = [];
 
+  // Track used product IDs across looks to get variety
+  const usedAcrossLooks = new Set<string>();
+
   for (let i = 0; i < occasions.length; i++) {
     const ctx: OutfitContext = {
       occasion: occasions[i],
       vibe:     analysis.aesthetic,
       gender:   (analysis.gender as "female" | "male") ?? "female",
       preferred_colors: analysis.color ? [analysis.color.toLowerCase()] : undefined,
+      rejected_skus: Array.from(usedAcrossLooks),
     };
 
     const outfit = buildOutfit(ctx);
-    if (outfit) {
-      const chatOutfit = outfitToChat(outfit);
-      looks.push({
-        look_number: i + 1,
-        label: `${occasions[i].replace(/-/g, " ")} look`.replace(/\b\w/g, c => c.toUpperCase()),
-        ...chatOutfit,
-      });
-    }
-  }
+    if (!outfit) continue;
 
-  // If we didn't get enough looks from specific occasions, try multi
-  if (looks.length < 2) {
-    const ctx = analysisToContext(analysis);
-    const multiOutfits = buildMultipleOutfits(ctx, 3 - looks.length);
-    for (const o of multiOutfits) {
-      const chatOutfit = outfitToChat(o);
-      looks.push({
-        look_number: looks.length + 1,
-        label: o.label || `Style Look ${looks.length + 1}`,
-        ...chatOutfit,
-      });
+    // Post-process: REMOVE any slot that matches the anchor's excluded roles.
+    // The user already owns/selected that item — don't recommend same category.
+    const filteredSlots = outfit.slots.filter(
+      slot => !excludedRoles.includes(slot.role)
+    );
+
+    if (filteredSlots.length === 0) continue;
+
+    // Track used IDs for variety in next look
+    for (const slot of filteredSlots) usedAcrossLooks.add(slot.product.id);
+
+    // Build the chat-renderable outfit from filtered slots only
+    const outfitObj: Record<string, unknown> = {};
+    let total = 0;
+    for (const slot of filteredSlots) {
+      outfitObj[slot.role] = {
+        sku:    slot.product.id,
+        name:   slot.product.name,
+        price:  slot.product.price,
+        note:   slot.reason,
+        emoji:  emojiFor(slot.role),
+        url:    slot.product.url,
+        img:    slot.product.image,
+        colors: slot.product.color ?? [],
+        color_family: slot.product.color_family,
+      };
+      total += slot.product.price;
     }
+
+    const occasionLabel = occasions[i].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+    looks.push({
+      look_number: i + 1,
+      label: `${occasionLabel} Look`,
+      anchor_role: anchorRole,
+      excluded_roles: excludedRoles,
+      occasion: outfit.occasion,
+      vibe: outfit.vibe_label,
+      outfit: outfitObj,
+      total,
+      budget_note: `Complete-the-look additions for ₹${total.toLocaleString("en-IN")}`,
+      style_notes: explainOutfit(outfit),
+    });
   }
 
   return looks;
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Find similar products in our catalogue to the uploaded image
+   Claude vision system prompt — ANCHOR PRODUCT analysis
+   The prompt emphasizes that we're analyzing the user's OWN item
+   and will build outfits AROUND it.
    ──────────────────────────────────────────────────────────────── */
-function findSimilarFromAnalysis(analysis: ImageAnalysis, limit = 6): EnrichedProduct[] {
-  // Map analysis category → our product_type
-  const categoryMap: Record<string, string> = {
-    "dress": "DRESS", "t-shirt": "TOP", "top": "TOP", "blouse": "TOP",
-    "shirt": "TOP", "jeans": "BOTTOM", "pants": "BOTTOM", "shorts": "BOTTOM",
-    "skirt": "BOTTOM", "shoes": "FOOTWEAR", "sneakers": "FOOTWEAR",
-    "heels": "FOOTWEAR", "sandals": "FOOTWEAR", "bag": "BAG", "handbag": "BAG",
-    "clutch": "BAG", "jewelry": "JEWELRY", "necklace": "JEWELRY",
-    "earrings": "JEWELRY", "bracelet": "JEWELRY", "sunglasses": "EYEWEAR",
-    "watch": "WATCH", "hat": "HAT", "jacket": "TOP", "hoodie": "TOP",
-    "sweater": "TOP",
-  };
-  const targetType = categoryMap[analysis.category.toLowerCase()] ?? "";
+const IMAGE_ANALYSIS_PROMPT = `You are Toastie — Burnt Toast's AI fashion stylist with expert-level fashion knowledge.
 
-  return CATALOGUE
-    .filter(p => p.product_type === targetType)
-    .map(p => {
-      let score = 0;
-      // Style match (35%)
-      if (p.aesthetics.includes(analysis.aesthetic as never)) score += 35;
-      else if (p.aesthetics.some(a => analysis.aesthetic.includes(a.split("-")[0]))) score += 15;
-      // Color compatibility (25%)
-      const pColors = (p.color ?? []).map((c: string) => c.toLowerCase());
-      if (pColors.includes(analysis.color.toLowerCase())) score += 25;
-      else if (p.color_family === analysis.color_family) score += 12;
-      // Occasion relevance (20%)
-      const pOccasion = Array.isArray(p.occasion) ? p.occasion : [p.occasion ?? ""];
-      if (analysis.occasion_suggestions.some(o => pOccasion.some((po: string) => po.toLowerCase().includes(o)))) score += 20;
-      // Gender match (10%)
-      if (p.gender === analysis.gender || p.gender === "unisex") score += 10;
-      // Popularity/rating (10%)
-      score += Math.min(10, (p.rating ?? 0) * 2);
-      return { product: p, score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(s => s.product);
-}
+A customer has uploaded an image of a fashion product THEY OWN or want to style around.
+This is their ANCHOR ITEM — you will build complete outfits around it.
+
+Analyze this product image deeply. Extract every detail a fashion stylist would notice.
+
+GENDER DETECTION RULES:
+- Determine gender relevance ONLY from the product category and design.
+- Women's dress, crop top, skirt → "female"
+- Men's formal shirt, men's polo → "male"
+- Sneakers, plain t-shirt, hoodie, bag, sunglasses → "unisex"
+- NEVER infer gender from any person in the image.
+- When in doubt, default to "unisex".
+
+Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
+
+{
+  "category": "one of: dress, t-shirt, top, blouse, shirt, jeans, pants, shorts, skirt, shoes, sneakers, heels, sandals, bag, handbag, clutch, jewelry, necklace, earrings, bracelet, sunglasses, watch, hat, jacket, hoodie, sweater",
+  "color": "primary color name (e.g. black, white, red, navy, sage, cream, brown, multi)",
+  "color_family": "one of: neutral, earth, warm-pastel, cool-pastel, bold, jewel-tone, monochrome, multi",
+  "pattern": "one of: solid, floral, striped, printed, textured, checked, abstract, graphic, embroidered, sequined, plain",
+  "style_type": "one of: casual, streetwear, formal, party, ethnic, luxury, minimalist, oversized, vintage, romantic, preppy, athleisure, boho, smart-casual",
+  "material": "best guess: denim, cotton, leather, silk, wool, polyester, linen, knit, chiffon, satin, velvet, canvas, suede, mesh, unknown",
+  "fit": "one of: slim, oversized, regular, loose, cropped, fitted, flowy, structured, relaxed",
+  "gender": "one of: female, male, unisex — determined ONLY from the product, never from any person",
+  "season": "one of: summer, winter, monsoon, all-season, spring, autumn",
+  "aesthetic": "one of: y2k-revival, urban-streetwear, smart-casual, minimal-clean, boho-coastal, preppy-collegiate, athleisure, feminine-romantic",
+  "occasion_suggestions": ["3-4 occasions this pairs well with, e.g. casual-hangout, date-night, college-fest, party, brunch, office, travel"],
+  "description": "One sentence describing the exact product — be specific about what you see",
+  "stylist_message": "2-3 sentences as a personal stylist reacting to this product as the user's ANCHOR piece. Mention what vibe it gives and that you'll build complete looks AROUND it. Example: 'Love this brown fitted top — it's giving effortless smart-casual energy. Let me build some complete looks around it with matching bottoms, shoes, and accessories from our collection.'"
+}`;
 
 /* ────────────────────────────────────────────────────────────────
    POST /api/image-style
@@ -267,7 +305,7 @@ export async function POST(req: NextRequest) {
 
     const client = getAnthropicClient();
 
-    /* ── Step 1: Claude vision analyses the uploaded image ── */
+    /* ── Step 1: Claude vision analyses the uploaded ANCHOR product ── */
     const visionResponse = await client.messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 800,
@@ -301,23 +339,57 @@ export async function POST(req: NextRequest) {
 
     const analysis: ImageAnalysis = JSON.parse(jsonMatch[0]);
 
-    // Override gender from session if available
-    if (session?.userProfile?.gender) {
+    // Override gender from session if available and analysis is unisex
+    if (session?.userProfile?.gender && analysis.gender === "unisex") {
       analysis.gender = session.userProfile.gender;
     }
 
-    console.log("[/api/image-style] analysis:", {
+    const anchorType = CATEGORY_TO_TYPE[analysis.category.toLowerCase()] ?? "TOP";
+    const anchorRole = TYPE_TO_ROLE[anchorType] ?? "top";
+    const excludedRoles = getExcludedRoles(anchorType);
+
+    console.log("[/api/image-style] anchor analysis:", {
       category: analysis.category,
+      product_type: anchorType,
+      anchor_role: anchorRole,
+      excluded_roles: excludedRoles,
       color: analysis.color,
+      gender: analysis.gender,
       aesthetic: analysis.aesthetic,
       occasions: analysis.occasion_suggestions,
     });
 
-    /* ── Step 2: Build styled looks from our catalogue ── */
-    const looks = buildLooksFromAnalysis(analysis);
+    /* ── Step 2: If gender is unisex and not overridden, ask user ── */
+    if (analysis.gender === "unisex") {
+      return NextResponse.json({
+        type: "image_looks",
+        message: analysis.stylist_message,
+        needs_gender: true,
+        analysis: {
+          category:    analysis.category,
+          color:       analysis.color,
+          pattern:     analysis.pattern,
+          style_type:  analysis.style_type,
+          material:    analysis.material,
+          fit:         analysis.fit,
+          gender:      analysis.gender,
+          season:      analysis.season,
+          aesthetic:   analysis.aesthetic,
+          description: analysis.description,
+        },
+        anchor_info: {
+          role: anchorRole,
+          type: anchorType,
+          excluded_roles: excludedRoles,
+        },
+        looks: [],
+        next_question: "This product works for all genders — are we styling it for men or women?",
+        quick_replies: ["Women 👗", "Men 👔"],
+      });
+    }
 
-    /* ── Step 3: Find similar items in our store ── */
-    const similar = findSimilarFromAnalysis(analysis);
+    /* ── Step 3: Build completion looks AROUND the anchor ── */
+    const looks = buildCompletionLooks(analysis);
 
     /* ── Step 4: Return structured response ── */
     return NextResponse.json({
@@ -335,16 +407,13 @@ export async function POST(req: NextRequest) {
         aesthetic:   analysis.aesthetic,
         description: analysis.description,
       },
+      anchor_info: {
+        role: anchorRole,
+        type: anchorType,
+        excluded_roles: excludedRoles,
+      },
       looks,
-      similar_products: similar.map(p => ({
-        sku: p.id, name: p.name, price: p.price,
-        img: p.image, url: p.url,
-        category: p.category, sizes: p.sizes,
-        rating: p.rating, isNew: p.isNew,
-        colors: p.color ?? [],
-        color_family: p.color_family,
-      })),
-      next_question: "Want me to tweak any of these looks, or style the uploaded piece differently?",
+      next_question: "Want me to tweak any of these looks, or try a different vibe around your piece?",
     });
 
   } catch (error: unknown) {

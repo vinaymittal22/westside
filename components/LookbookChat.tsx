@@ -287,8 +287,10 @@ interface ImageLooksData {
   message: string;
   analysis: ImageAnalysisInfo;
   looks: LookEntry[];
-  similar_products?: ProductsApiItem[];
+  needs_gender?: boolean;
+  anchor_info?: { role: string; type: string; excluded_roles: string[] };
   next_question?: string;
+  quick_replies?: string[];
 }
 
 type ParsedResponse = ChatData | OutfitData | MultiData | ProductsData | ReplaceOptionsData | ImageLooksData;
@@ -1013,67 +1015,72 @@ function ImageLooksRenderer({ data, onQuickReply }: { data: ImageLooksData; onQu
         </div>
       )}
 
-      {/* Section divider */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ flex: 1, height: 1, background: BORDER }} />
-        <span style={{ color: MUTED, fontSize: 9, fontWeight: 900, letterSpacing: 3, fontFamily: "'Courier New',monospace" }}>
-          STYLED LOOKS FOR YOU
-        </span>
-        <div style={{ flex: 1, height: 1, background: BORDER }} />
-      </div>
+      {/* Anchor info badge */}
+      {data.anchor_info && (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          background: "#fef3c7", border: "1px solid #f59e0b",
+          borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 600,
+          color: "#92400e", alignSelf: "flex-start",
+        }}>
+          🔗 Anchor: {data.anchor_info.type.toLowerCase()} — completing outfit around your piece
+        </div>
+      )}
 
-      {/* Outfit looks */}
-      {data.looks?.map((look, i) => (
-        <OutfitBlock
-          key={i}
-          outfit={look.outfit}
-          occasion={look.occasion}
-          vibe={look.vibe}
-          total={look.total}
-          budget_note={look.budget_note}
-          label={look.label}
-          style_notes={look.style_notes}
-          lookNumber={look.look_number}
-        />
-      ))}
+      {/* Gender selection needed */}
+      {data.needs_gender && data.quick_replies && (
+        <div style={{
+          display: "flex", flexDirection: "column", gap: 10,
+          background: "#fffbeb", border: `1px solid #f59e0b`,
+          borderRadius: 12, padding: 16,
+        }}>
+          <span style={{ fontSize: 13, color: TEXT, fontWeight: 500 }}>
+            {data.next_question || "Are we styling this for men or women?"}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            {data.quick_replies.map((label) => (
+              <button
+                key={label}
+                onClick={() => onQuickReply(label)}
+                style={{
+                  padding: "8px 18px", borderRadius: 20, border: `1px solid ${BORDER}`,
+                  background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600,
+                  color: TEXT, transition: "all 0.15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#fef3c7"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
-      {/* Similar products section */}
-      {data.similar_products && data.similar_products.length > 0 && (
+      {/* Section divider + outfit looks (only when we have looks) */}
+      {data.looks && data.looks.length > 0 && (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ flex: 1, height: 1, background: BORDER }} />
             <span style={{ color: MUTED, fontSize: 9, fontWeight: 900, letterSpacing: 3, fontFamily: "'Courier New',monospace" }}>
-              SIMILAR IN OUR STORE
+              COMPLETE THE LOOK
             </span>
             <div style={{ flex: 1, height: 1, background: BORDER }} />
           </div>
-          <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${Math.min(data.similar_products.length, 4)}, minmax(140px, 1fr))`,
-              gap: 8,
-              minWidth: Math.min(data.similar_products.length, 4) * 148,
-            }}>
-              {data.similar_products.slice(0, 4).map((p) => (
-                <CompactCard
-                  key={p.sku}
-                  section={
-                    p.category?.toLowerCase().includes("footwear") ? "footwear"
-                    : p.category?.toLowerCase().includes("dress") ? "dress"
-                    : p.category?.toLowerCase().includes("bottom") || p.category?.toLowerCase().includes("denim") || p.category?.toLowerCase().includes("skirt") ? "bottom"
-                    : p.category?.toLowerCase().includes("accessor") ? "necklace"
-                    : "top"
-                  }
-                  item={{
-                    sku: p.sku, name: p.name, price: p.price,
-                    note: "", emoji: "✨",
-                    url: p.url, img: p.img,
-                    colors: p.colors, color_family: p.color_family,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
+
+          {data.looks.map((look, i) => (
+            <OutfitBlock
+              key={i}
+              outfit={look.outfit}
+              occasion={look.occasion}
+              vibe={look.vibe}
+              total={look.total}
+              budget_note={look.budget_note}
+              label={look.label}
+              style_notes={look.style_notes}
+              lookNumber={look.look_number}
+            />
+          ))}
         </>
       )}
 
