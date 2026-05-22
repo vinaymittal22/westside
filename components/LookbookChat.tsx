@@ -1643,6 +1643,9 @@ export default function LookbookChat() {
   const [activeVibe, setActiveVibe] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<{ base64: string; mime: string } | null>(null);
+  // Persist the most-recent uploaded image so we can re-call /api/image-style
+  // when the user picks a gender from the unisex disambiguation prompt.
+  const lastUploadedRef = useRef<{ base64: string; mime: string; preview: string } | null>(null);
   const { totalItems: cartCount } = useCart();
   const { totalItems: wishCount } = useWishlist();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -1721,6 +1724,11 @@ export default function LookbookChat() {
     const preview = imagePreview;
     setLoading(true);
 
+    // Remember this upload so gender-quick-reply can re-call /api/image-style
+    if (preview) {
+      lastUploadedRef.current = { base64: imageFile.base64, mime: imageFile.mime, preview };
+    }
+
     // Show user bubble with image
     const userMsg: ChatMessage = { role: "user", content: "📸 [Uploaded a product image for styling]" };
     setMessages(prev => [...prev, userMsg]);
@@ -1781,6 +1789,93 @@ export default function LookbookChat() {
     }
 
     setLoading(false);
+  }
+
+  /**
+   * Re-style the last uploaded image with an explicit gender override.
+   * Called when the user clicks the "Women" / "Men" quick-reply after
+   * the unisex disambiguation prompt.
+   */
+  async function restyleWithGender(gender: "female" | "male", userBubble: string) {
+    const last = lastUploadedRef.current;
+    if (!last || loading) return;
+    setLoading(true);
+
+    // Show the user's choice as a chat bubble
+    setMessages(prev => [...prev, { role: "user", content: userBubble }]);
+
+    try {
+      const res = await fetch("/api/image-style", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: last.base64,
+          imageMime:   last.mime,
+          session,
+          genderOverride: gender,
+        }),
+      });
+      const data = await res.json();
+
+      let parsed: ParsedResponse | null = null;
+      if (data && typeof data.type === "string") {
+        parsed = data as ParsedResponse;
+      }
+      if (!parsed) {
+        setMessages(prev => [...prev, { role: "assistant", content: "Couldn't restyle — try again!", parsed: { type: "chat", message: "Couldn't restyle — try again!" } }]);
+      } else {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: data.message || "",
+          parsed,
+          imagePreview: last.preview,
+        } as ChatMessage]);
+        if (parsed.type === "image_looks" && parsed.looks?.[0]) {
+          setSession(prev => {
+            const firstLook = (parsed as ImageLooksData).looks[0];
+            const newOutfit: SessionState["currentOutfit"] = {};
+            const outfit = firstLook.outfit ?? {};
+            for (const role of Object.keys(outfit) as Array<keyof OutfitPair>) {
+              const item = outfit[role];
+              if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+            }
+            return {
+              ...prev,
+              currentOutfit: newOutfit,
+              userProfile: {
+                ...prev.userProfile,
+                gender,
+                occasion: firstLook.occasion ?? prev.userProfile.occasion,
+                vibe: firstLook.vibe ?? prev.userProfile.vibe,
+              },
+            };
+          });
+        }
+      }
+    } catch {
+      setMessages(prev => [...prev, { role: "assistant", content: "", parsed: { type: "chat", message: "Couldn't connect — try again!" } }]);
+    }
+
+    setLoading(false);
+  }
+
+  /**
+   * Routes a quick-reply click. If the last assistant message asked for
+   * gender disambiguation on an image upload, re-call /api/image-style
+   * with the gender override (preserving anchor context). Otherwise fall
+   * through to the regular chat send().
+   */
+  function handleQuickReply(text: string) {
+    const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+    const askedGender =
+      lastAssistant?.parsed?.type === "image_looks" &&
+      (lastAssistant.parsed as ImageLooksData).needs_gender === true;
+
+    if (askedGender && lastUploadedRef.current) {
+      if (text.toLowerCase().startsWith("women")) return restyleWithGender("female", text);
+      if (text.toLowerCase().startsWith("men"))   return restyleWithGender("male",   text);
+    }
+    send(text);
   }
 
   useEffect(() => {
@@ -2272,7 +2367,7 @@ export default function LookbookChat() {
                   )}
                   {msg.role === "assistant" ? (
                     msg.parsed
-                      ? <ResponseRenderer data={msg.parsed} onQuickReply={(t) => send(t)} onSelectReplacement={handleSelectReplacement} />
+                      ? <ResponseRenderer data={msg.parsed} onQuickReply={handleQuickReply} onSelectReplacement={handleSelectReplacement} />
                       : (
                         <div style={{
                           background: CARD, border: `1px solid ${BORDER}`,

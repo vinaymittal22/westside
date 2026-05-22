@@ -246,13 +246,13 @@ This is their ANCHOR ITEM — you will build complete outfits around it.
 
 Analyze this product image deeply. Extract every detail a fashion stylist would notice.
 
-GENDER DETECTION RULES:
-- Determine gender relevance ONLY from the product category and design.
-- Women's dress, crop top, skirt → "female"
-- Men's formal shirt, men's polo → "male"
-- Sneakers, plain t-shirt, hoodie, bag, sunglasses → "unisex"
-- NEVER infer gender from any person in the image.
-- When in doubt, default to "unisex".
+GENDER DETECTION RULES (be decisive — avoid "unisex" whenever possible):
+1. If a PERSON is visible wearing/modeling the product, use THEIR apparent gender. A woman modeling a tee → "female". A man modeling a tee → "male". This is the strongest signal.
+2. If no person is visible, use the product cut/design:
+   - Women's silhouette (fitted bust, cropped, flared, feminine cut, dress, skirt, crop top, blouse) → "female"
+   - Men's silhouette (boxy fit, men's collar, men's polo, men's formal shirt) → "male"
+3. ONLY return "unisex" when it's a flat-lay/product-only shot of a truly genderless item (plain sneakers with no styling cues, basic bag, sunglasses with no gendered design).
+4. When a person is shown wearing the item, NEVER return "unisex" — use their gender.
 
 Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
 
@@ -264,7 +264,7 @@ Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
   "style_type": "one of: casual, streetwear, formal, party, ethnic, luxury, minimalist, oversized, vintage, romantic, preppy, athleisure, boho, smart-casual",
   "material": "best guess: denim, cotton, leather, silk, wool, polyester, linen, knit, chiffon, satin, velvet, canvas, suede, mesh, unknown",
   "fit": "one of: slim, oversized, regular, loose, cropped, fitted, flowy, structured, relaxed",
-  "gender": "one of: female, male, unisex — determined ONLY from the product, never from any person",
+  "gender": "one of: female, male, unisex — use the model's gender if a person is visible; otherwise infer from product cut. Reserve unisex ONLY for flat-lay genderless items.",
   "season": "one of: summer, winter, monsoon, all-season, spring, autumn",
   "aesthetic": "one of: y2k-revival, urban-streetwear, smart-casual, minimal-clean, boho-coastal, preppy-collegiate, athleisure, feminine-romantic",
   "occasion_suggestions": ["3-4 occasions this pairs well with, e.g. casual-hangout, date-night, college-fest, party, brunch, office, travel"],
@@ -286,10 +286,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { imageBase64, imageMime, session } = body as {
+    const { imageBase64, imageMime, session, genderOverride } = body as {
       imageBase64: string;
       imageMime: string;
       session?: { userProfile?: { gender?: string } };
+      genderOverride?: "female" | "male";
     };
 
     if (!imageBase64 || !imageMime) {
@@ -339,8 +340,12 @@ export async function POST(req: NextRequest) {
 
     const analysis: ImageAnalysis = JSON.parse(jsonMatch[0]);
 
-    // Override gender from session if available and analysis is unisex
-    if (session?.userProfile?.gender && analysis.gender === "unisex") {
+    // Apply explicit gender override (from user clicking Women/Men quick reply)
+    if (genderOverride === "female" || genderOverride === "male") {
+      analysis.gender = genderOverride;
+    }
+    // Otherwise fall back to session gender if analysis is unisex
+    else if (session?.userProfile?.gender && analysis.gender === "unisex") {
       analysis.gender = session.userProfile.gender;
     }
 
