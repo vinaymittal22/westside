@@ -49,6 +49,20 @@ interface SessionState {
   };
   rejectedSkus?: string[];
   likedSkus?: string[];
+  /**
+   * Set when the user uploaded an image and we're styling AROUND that
+   * anchor item. While present:
+   *  - Outfit results NEVER include slots in `excluded_roles`.
+   *  - Replacement / multi / complete_look respect the anchor.
+   * Cleared by the client when the user starts a new chat or asks for
+   * a complete fresh outfit.
+   */
+  anchor?: {
+    type: string;            // e.g. "DRESS", "TOP"
+    role: string;            // e.g. "dress", "top"
+    excluded_roles: string[]; // e.g. ["dress", "top", "bottom"]
+    description?: string;
+  };
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -77,6 +91,41 @@ function outfitToChat(o: GeneratedOutfit) {
     total:       o.total_price,
     budget_note: o.budget_note,
     style_notes: explainOutfit(o),
+  };
+}
+
+/**
+ * Strip any slot from an outfitToChat() result whose role matches the
+ * anchor's excluded_roles. Used when the user uploaded an anchor item
+ * (e.g. a dress) — we never want to recommend another item in the
+ * same category as the anchor.
+ *
+ * Also recomputes `total`. `style_notes` is a summary object (not per-slot)
+ * so we leave it alone — it still describes the overall vibe.
+ */
+function applyAnchorFilter<T extends {
+  outfit: Record<string, unknown>;
+  total?: number;
+}>(
+  result: T,
+  anchor?: { excluded_roles?: string[] } | null,
+): T {
+  if (!anchor?.excluded_roles?.length) return result;
+  const excluded = new Set(anchor.excluded_roles);
+
+  const filteredOutfit: Record<string, unknown> = {};
+  let total = 0;
+  for (const [role, item] of Object.entries(result.outfit)) {
+    if (excluded.has(role)) continue;
+    filteredOutfit[role] = item;
+    const price = (item as { price?: number })?.price ?? 0;
+    total += price;
+  }
+
+  return {
+    ...result,
+    outfit: filteredOutfit,
+    total,
   };
 }
 
@@ -110,15 +159,30 @@ function buildSessionContextMessage(session: SessionState): string {
   const rejected = session.rejectedSkus ?? [];
   const liked = session.likedSkus ?? [];
 
+  const anchor = session.anchor;
   const hasAnyState = Object.keys(profile).length > 0
     || Object.keys(outfit).length > 0
     || rejected.length > 0
-    || liked.length > 0;
+    || liked.length > 0
+    || !!anchor;
   if (!hasAnyState) return "";
 
   lines.push("═══════════════════════════════════════════════════════════════");
   lines.push("CURRENT SESSION MEMORY (DO NOT RE-ASK THIS — IT'S ALREADY KNOWN)");
   lines.push("═══════════════════════════════════════════════════════════════");
+
+  if (anchor) {
+    lines.push("ANCHOR ITEM (USER ALREADY OWNS / UPLOADED THIS):");
+    lines.push(`  • Category: ${anchor.type} (role: ${anchor.role})`);
+    if (anchor.description) lines.push(`  • Description: ${anchor.description}`);
+    lines.push(`  • Excluded roles (NEVER recommend these): ${anchor.excluded_roles.join(", ")}`);
+    lines.push("RULES WHILE ANCHOR IS ACTIVE:");
+    lines.push("  - We are COMPLETING an outfit AROUND the user's anchor item.");
+    lines.push("  - DO NOT recommend another item in the same category as the anchor.");
+    lines.push("  - If user asks to swap a slot (footwear/bag/etc.), only swap THAT slot.");
+    lines.push("  - If user explicitly asks for a 'complete fresh outfit' or 'forget the dress' / 'show me top + bottom', that means they want to clear the anchor — answer naturally and let the system handle it.");
+    lines.push("");
+  }
 
   if (Object.keys(profile).length > 0) {
     lines.push("USER PROFILE:");
@@ -262,7 +326,7 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
       return {
         type: "outfit",
         message: intent.message,
-        ...outfitToChat(out),
+        ...applyAnchorFilter(outfitToChat(out), session?.anchor),
         next_question: intent.next_question,
       };
     }
@@ -283,7 +347,7 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
         looks: outs.map((o, i) => ({
           look_number: i + 1,
           label: o.label,
-          ...outfitToChat(o),
+          ...applyAnchorFilter(outfitToChat(o), session?.anchor),
         })),
         next_question: intent.next_question,
       };
@@ -415,7 +479,7 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
       return {
         type: "outfit",
         message: intent.message,
-        ...outfitToChat(out),
+        ...applyAnchorFilter(outfitToChat(out), session?.anchor),
         next_question: intent.next_question,
       };
     }
@@ -470,10 +534,12 @@ export async function POST(req: NextRequest) {
         rejected_skus: session.rejectedSkus,
       });
       if (!updated) return NextResponse.json(fallback("buildOutfit null on confirm"), { status: 200 });
+      // If user is in anchor mode (uploaded an item), strip out same-category
+      // slots the engine may have auto-filled (e.g. a top/bottom alongside their dress).
       return NextResponse.json({
         type: "outfit",
         message: "Locked in 🔥 Your updated look:",
-        ...outfitToChat(updated),
+        ...applyAnchorFilter(outfitToChat(updated), session.anchor),
         next_question: "Refine anything else, or shop the look?",
       });
     }

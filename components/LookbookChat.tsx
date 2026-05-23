@@ -1567,6 +1567,13 @@ interface SessionState {
   };
   rejectedSkus: string[];
   likedSkus: string[];
+  /** Set when the user uploaded an anchor item — we build looks AROUND it. */
+  anchor?: {
+    type: string;
+    role: string;
+    excluded_roles: string[];
+    description?: string;
+  } | null;
 }
 
 const EMPTY_SESSION: SessionState = {
@@ -1574,6 +1581,7 @@ const EMPTY_SESSION: SessionState = {
   userProfile: {},
   rejectedSkus: [],
   likedSkus: [],
+  anchor: null,
 };
 
 /** Pull the latest outfit and profile bits from a parsed assistant response */
@@ -1683,6 +1691,7 @@ export default function LookbookChat() {
     setSession(EMPTY_SESSION);
     setActiveChatId(null);
     setSidebarOpen(false);
+    lastUploadedRef.current = null;
   }
   function loadChat(entry: ChatHistoryEntry) {
     setMessages(entry.messages);
@@ -1760,25 +1769,37 @@ export default function LookbookChat() {
           parsed,
           imagePreview: preview ?? undefined,
         } as ChatMessage]);
-        if (parsed.type === "image_looks" && parsed.looks?.[0]) {
+        if (parsed.type === "image_looks") {
           setSession(prev => {
-            const firstLook = parsed!.type === "image_looks" ? (parsed as ImageLooksData).looks[0] : null;
-            if (!firstLook) return prev;
+            const imageLooks = parsed as ImageLooksData;
+            const firstLook = imageLooks.looks?.[0];
             const newOutfit: SessionState["currentOutfit"] = {};
-            const outfit = firstLook.outfit ?? {};
-            for (const role of Object.keys(outfit) as Array<keyof OutfitPair>) {
-              const item = outfit[role];
-              if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+            if (firstLook?.outfit) {
+              for (const role of Object.keys(firstLook.outfit) as Array<keyof OutfitPair>) {
+                const item = firstLook.outfit[role];
+                if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+              }
             }
+            // Persist the anchor so all subsequent /api/chat calls respect it.
+            const anchorInfo = imageLooks.anchor_info;
+            const nextAnchor = anchorInfo
+              ? {
+                  type:           anchorInfo.type,
+                  role:           anchorInfo.role,
+                  excluded_roles: anchorInfo.excluded_roles,
+                  description:    imageLooks.analysis?.description,
+                }
+              : prev.anchor ?? null;
             return {
               ...prev,
-              currentOutfit: newOutfit,
+              currentOutfit: Object.keys(newOutfit).length ? newOutfit : prev.currentOutfit,
               userProfile: {
                 ...prev.userProfile,
-                gender: (parsed as ImageLooksData).analysis?.gender ?? prev.userProfile.gender,
-                occasion: firstLook.occasion ?? prev.userProfile.occasion,
-                vibe: firstLook.vibe ?? prev.userProfile.vibe,
+                gender:   imageLooks.analysis?.gender   ?? prev.userProfile.gender,
+                occasion: firstLook?.occasion           ?? prev.userProfile.occasion,
+                vibe:     firstLook?.vibe               ?? prev.userProfile.vibe,
               },
+              anchor: nextAnchor,
             };
           });
         }
@@ -1830,24 +1851,36 @@ export default function LookbookChat() {
           parsed,
           imagePreview: last.preview,
         } as ChatMessage]);
-        if (parsed.type === "image_looks" && parsed.looks?.[0]) {
+        if (parsed.type === "image_looks") {
           setSession(prev => {
-            const firstLook = (parsed as ImageLooksData).looks[0];
+            const imageLooks = parsed as ImageLooksData;
+            const firstLook = imageLooks.looks?.[0];
             const newOutfit: SessionState["currentOutfit"] = {};
-            const outfit = firstLook.outfit ?? {};
-            for (const role of Object.keys(outfit) as Array<keyof OutfitPair>) {
-              const item = outfit[role];
-              if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+            if (firstLook?.outfit) {
+              for (const role of Object.keys(firstLook.outfit) as Array<keyof OutfitPair>) {
+                const item = firstLook.outfit[role];
+                if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+              }
             }
+            const anchorInfo = imageLooks.anchor_info;
+            const nextAnchor = anchorInfo
+              ? {
+                  type:           anchorInfo.type,
+                  role:           anchorInfo.role,
+                  excluded_roles: anchorInfo.excluded_roles,
+                  description:    imageLooks.analysis?.description,
+                }
+              : prev.anchor ?? null;
             return {
               ...prev,
-              currentOutfit: newOutfit,
+              currentOutfit: Object.keys(newOutfit).length ? newOutfit : prev.currentOutfit,
               userProfile: {
                 ...prev.userProfile,
                 gender,
-                occasion: firstLook.occasion ?? prev.userProfile.occasion,
-                vibe: firstLook.vibe ?? prev.userProfile.vibe,
+                occasion: firstLook?.occasion ?? prev.userProfile.occasion,
+                vibe:     firstLook?.vibe     ?? prev.userProfile.vibe,
               },
+              anchor: nextAnchor,
             };
           });
         }
@@ -2446,6 +2479,33 @@ export default function LookbookChat() {
             onChange={handleImageSelect}
             style={{ display: "none" }}
           />
+
+          {/* Anchor banner — visible whenever the user is styling around an uploaded item */}
+          {session.anchor && (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: 12, background: "#fef3c7", border: "1px solid #f59e0b",
+              borderRadius: 12, padding: "8px 12px",
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#92400e", lineHeight: 1.4 }}>
+                🔗 Styling around your <strong>{session.anchor.type.toLowerCase()}</strong> — recommendations exclude {session.anchor.excluded_roles.join(", ")}.
+              </span>
+              <button
+                onClick={() => {
+                  setSession(prev => ({ ...prev, anchor: null }));
+                  lastUploadedRef.current = null;
+                }}
+                style={{
+                  padding: "4px 10px", borderRadius: 14, border: "1px solid #f59e0b",
+                  background: "#fff", color: "#92400e", fontSize: 11, fontWeight: 700,
+                  cursor: "pointer", whiteSpace: "nowrap",
+                }}
+                title="Forget the uploaded item and start a fresh full outfit"
+              >
+                Clear & full outfit
+              </button>
+            </div>
+          )}
 
           {/* Image preview — shown above the pill when an image is staged */}
           {imagePreview && (
