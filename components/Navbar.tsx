@@ -62,8 +62,8 @@ export default function Navbar() {
           />
         </Link>
 
-        {/* Center title (mobile-hidden) */}
-        <div className="hidden md:flex flex-col items-center">
+        {/* Center title (mobile-hidden) — links to chatbot */}
+        <Link href="/chat" className="hidden md:flex flex-col items-center" style={{ textDecoration: "none", cursor: "pointer" }}>
           <span style={{
             fontFamily: "var(--font-display)",
             fontSize: 18, color: "var(--ink)", lineHeight: 1,
@@ -77,7 +77,7 @@ export default function Navbar() {
           }}>
             YOUR PERSONAL AI STYLIST
           </span>
-        </div>
+        </Link>
 
         {/* Right cluster — links + live + actions */}
         <div className="flex items-center gap-3 md:gap-5">
