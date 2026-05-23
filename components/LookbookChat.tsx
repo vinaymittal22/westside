@@ -272,6 +272,7 @@ interface ReplaceOptionsData {
 interface ImageAnalysisInfo {
   category: string;
   color: string;
+  color_family?: string;
   pattern: string;
   style_type: string;
   material: string;
@@ -1556,6 +1557,20 @@ function parseRaw(raw: string): ParsedResponse | null {
 
 /* ── Main component ──────────────────────────────────────────────── */
 /* ── Session memory: outfit state + user profile across turns ── */
+interface ImageContext {
+  category: string;
+  color: string;
+  color_family?: string;
+  pattern: string;
+  style_type: string;
+  material: string;
+  fit: string;
+  gender: string;
+  season: string;
+  aesthetic: string;
+  description: string;
+}
+
 interface SessionState {
   currentOutfit: Record<string, { sku: string; name?: string; price?: number }>;
   userProfile: {
@@ -1574,6 +1589,10 @@ interface SessionState {
     excluded_roles: string[];
     description?: string;
   } | null;
+  /** Persistent image analysis — stays active until user uploads new image or starts new chat. */
+  imageContext?: ImageContext | null;
+  /** Tracks the mode: null = normal text chat, "image_styling" = anchor-based outfit completion. */
+  mode?: "image_styling" | null;
 }
 
 const EMPTY_SESSION: SessionState = {
@@ -1582,6 +1601,8 @@ const EMPTY_SESSION: SessionState = {
   rejectedSkus: [],
   likedSkus: [],
   anchor: null,
+  imageContext: null,
+  mode: null,
 };
 
 /** Pull the latest outfit and profile bits from a parsed assistant response */
@@ -1591,7 +1612,9 @@ function deriveSessionUpdate(parsed: ParsedResponse, prev: SessionState): Sessio
     userProfile: { ...prev.userProfile },
     rejectedSkus: [...prev.rejectedSkus],
     likedSkus: [...prev.likedSkus],
-    anchor: prev.anchor ?? null,   // PRESERVE anchor across chat turns
+    anchor: prev.anchor ?? null,         // PRESERVE anchor across chat turns
+    imageContext: prev.imageContext ?? null,  // PRESERVE image context across turns
+    mode: prev.mode ?? null,                 // PRESERVE mode across turns
   };
   // OUTFIT → store all slots as current
   if (parsed.type === "outfit") {
@@ -1729,19 +1752,77 @@ export default function LookbookChat() {
     setImageFile(null);
   }
 
+  /**
+   * Helper: update session from an image_looks API response.
+   * Sets anchor, imageContext, mode, currentOutfit, and userProfile.
+   */
+  function applyImageLooksToSession(imageLooks: ImageLooksData, genderOverride?: string) {
+    setSession(prev => {
+      const firstLook = imageLooks.looks?.[0];
+      const newOutfit: SessionState["currentOutfit"] = {};
+      if (firstLook?.outfit) {
+        for (const role of Object.keys(firstLook.outfit) as Array<keyof OutfitPair>) {
+          const item = firstLook.outfit[role];
+          if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
+        }
+      }
+      const anchorInfo = imageLooks.anchor_info;
+      const nextAnchor = anchorInfo
+        ? { type: anchorInfo.type, role: anchorInfo.role, excluded_roles: anchorInfo.excluded_roles, description: imageLooks.analysis?.description }
+        : prev.anchor ?? null;
+
+      // Build persistent imageContext from the analysis
+      const analysis = imageLooks.analysis;
+      const nextImageContext: ImageContext | null = analysis
+        ? {
+            category:    analysis.category,
+            color:       analysis.color,
+            color_family: analysis.color_family,
+            pattern:     analysis.pattern,
+            style_type:  analysis.style_type,
+            material:    analysis.material,
+            fit:         analysis.fit,
+            gender:      analysis.gender,
+            season:      analysis.season,
+            aesthetic:   analysis.aesthetic,
+            description: analysis.description,
+          }
+        : prev.imageContext ?? null;
+
+      return {
+        ...prev,
+        currentOutfit: Object.keys(newOutfit).length ? newOutfit : prev.currentOutfit,
+        userProfile: {
+          ...prev.userProfile,
+          gender:   genderOverride ?? analysis?.gender ?? prev.userProfile.gender,
+          occasion: firstLook?.occasion ?? prev.userProfile.occasion,
+          vibe:     firstLook?.vibe ?? prev.userProfile.vibe,
+        },
+        anchor: nextAnchor,
+        imageContext: nextImageContext,
+        mode: "image_styling" as const,
+      };
+    });
+  }
+
   async function sendImage() {
     if (!imageFile || loading) return;
     const preview = imagePreview;
+    // Capture any text the user typed alongside the image
+    const userText = input.trim();
     setLoading(true);
+    if (userText) setInput("");
 
     // Remember this upload so gender-quick-reply can re-call /api/image-style
     if (preview) {
       lastUploadedRef.current = { base64: imageFile.base64, mime: imageFile.mime, preview };
     }
 
-    // Show user bubble with image
-    const userMsg: ChatMessage = { role: "user", content: "📸 [Uploaded a product image for styling]" };
-    setMessages(prev => [...prev, userMsg]);
+    // Show user bubble — include their text if they wrote something
+    const bubbleContent = userText
+      ? `📸 [Uploaded a product image for styling]\n"${userText}"`
+      : "📸 [Uploaded a product image for styling]";
+    setMessages(prev => [...prev, { role: "user", content: bubbleContent }]);
     clearImage();
 
     try {
@@ -1752,6 +1833,8 @@ export default function LookbookChat() {
           imageBase64: imageFile.base64,
           imageMime: imageFile.mime,
           session,
+          // Send user's text so the API can use it for intent (occasion, vibe, budget)
+          ...(userText ? { userMessage: userText } : {}),
         }),
       });
       const data = await res.json();
@@ -1771,38 +1854,7 @@ export default function LookbookChat() {
           imagePreview: preview ?? undefined,
         } as ChatMessage]);
         if (parsed.type === "image_looks") {
-          setSession(prev => {
-            const imageLooks = parsed as ImageLooksData;
-            const firstLook = imageLooks.looks?.[0];
-            const newOutfit: SessionState["currentOutfit"] = {};
-            if (firstLook?.outfit) {
-              for (const role of Object.keys(firstLook.outfit) as Array<keyof OutfitPair>) {
-                const item = firstLook.outfit[role];
-                if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
-              }
-            }
-            // Persist the anchor so all subsequent /api/chat calls respect it.
-            const anchorInfo = imageLooks.anchor_info;
-            const nextAnchor = anchorInfo
-              ? {
-                  type:           anchorInfo.type,
-                  role:           anchorInfo.role,
-                  excluded_roles: anchorInfo.excluded_roles,
-                  description:    imageLooks.analysis?.description,
-                }
-              : prev.anchor ?? null;
-            return {
-              ...prev,
-              currentOutfit: Object.keys(newOutfit).length ? newOutfit : prev.currentOutfit,
-              userProfile: {
-                ...prev.userProfile,
-                gender:   imageLooks.analysis?.gender   ?? prev.userProfile.gender,
-                occasion: firstLook?.occasion           ?? prev.userProfile.occasion,
-                vibe:     firstLook?.vibe               ?? prev.userProfile.vibe,
-              },
-              anchor: nextAnchor,
-            };
-          });
+          applyImageLooksToSession(parsed as ImageLooksData);
         }
       }
     } catch {
@@ -1853,37 +1905,7 @@ export default function LookbookChat() {
           imagePreview: last.preview,
         } as ChatMessage]);
         if (parsed.type === "image_looks") {
-          setSession(prev => {
-            const imageLooks = parsed as ImageLooksData;
-            const firstLook = imageLooks.looks?.[0];
-            const newOutfit: SessionState["currentOutfit"] = {};
-            if (firstLook?.outfit) {
-              for (const role of Object.keys(firstLook.outfit) as Array<keyof OutfitPair>) {
-                const item = firstLook.outfit[role];
-                if (item?.sku) newOutfit[role as string] = { sku: item.sku, name: item.name, price: item.price };
-              }
-            }
-            const anchorInfo = imageLooks.anchor_info;
-            const nextAnchor = anchorInfo
-              ? {
-                  type:           anchorInfo.type,
-                  role:           anchorInfo.role,
-                  excluded_roles: anchorInfo.excluded_roles,
-                  description:    imageLooks.analysis?.description,
-                }
-              : prev.anchor ?? null;
-            return {
-              ...prev,
-              currentOutfit: Object.keys(newOutfit).length ? newOutfit : prev.currentOutfit,
-              userProfile: {
-                ...prev.userProfile,
-                gender,
-                occasion: firstLook?.occasion ?? prev.userProfile.occasion,
-                vibe:     firstLook?.vibe     ?? prev.userProfile.vibe,
-              },
-              anchor: nextAnchor,
-            };
-          });
+          applyImageLooksToSession(parsed as ImageLooksData, gender);
         }
       }
     } catch {
@@ -2499,7 +2521,7 @@ export default function LookbookChat() {
               </span>
               <button
                 onClick={() => {
-                  setSession(prev => ({ ...prev, anchor: null }));
+                  setSession(prev => ({ ...prev, anchor: null, imageContext: null, mode: null }));
                   lastUploadedRef.current = null;
                 }}
                 style={{

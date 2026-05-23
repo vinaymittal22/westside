@@ -286,11 +286,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { imageBase64, imageMime, session, genderOverride } = body as {
+    const { imageBase64, imageMime, session, genderOverride, userMessage } = body as {
       imageBase64: string;
       imageMime: string;
       session?: { userProfile?: { gender?: string } };
       genderOverride?: "female" | "male";
+      userMessage?: string;   // e.g. "style this for date night" or "make it under ₹4000"
     };
 
     if (!imageBase64 || !imageMime) {
@@ -307,6 +308,13 @@ export async function POST(req: NextRequest) {
     const client = getAnthropicClient();
 
     /* ── Step 1: Claude vision analyses the uploaded ANCHOR product ── */
+    // If user also typed text (e.g. "style this for date night"), append it
+    // so Claude can tailor occasion_suggestions and stylist_message.
+    let visionPrompt = IMAGE_ANALYSIS_PROMPT;
+    if (userMessage) {
+      visionPrompt += `\n\nThe customer also said: "${userMessage}"\nUse this to tailor your occasion_suggestions and stylist_message. For example, if they said "date night", prioritize date-night in occasion_suggestions. If they mentioned a budget, acknowledge it.`;
+    }
+
     const visionResponse = await client.messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 800,
@@ -317,7 +325,7 @@ export async function POST(req: NextRequest) {
             type: "image",
             source: { type: "base64", media_type: mimeType, data: imageBase64 },
           },
-          { type: "text", text: IMAGE_ANALYSIS_PROMPT },
+          { type: "text", text: visionPrompt },
         ],
       }],
     });
@@ -371,16 +379,17 @@ export async function POST(req: NextRequest) {
         message: analysis.stylist_message,
         needs_gender: true,
         analysis: {
-          category:    analysis.category,
-          color:       analysis.color,
-          pattern:     analysis.pattern,
-          style_type:  analysis.style_type,
-          material:    analysis.material,
-          fit:         analysis.fit,
-          gender:      analysis.gender,
-          season:      analysis.season,
-          aesthetic:   analysis.aesthetic,
-          description: analysis.description,
+          category:     analysis.category,
+          color:        analysis.color,
+          color_family: analysis.color_family,
+          pattern:      analysis.pattern,
+          style_type:   analysis.style_type,
+          material:     analysis.material,
+          fit:          analysis.fit,
+          gender:       analysis.gender,
+          season:       analysis.season,
+          aesthetic:    analysis.aesthetic,
+          description:  analysis.description,
         },
         anchor_info: {
           role: anchorRole,
@@ -401,16 +410,17 @@ export async function POST(req: NextRequest) {
       type: "image_looks",
       message: analysis.stylist_message,
       analysis: {
-        category:    analysis.category,
-        color:       analysis.color,
-        pattern:     analysis.pattern,
-        style_type:  analysis.style_type,
-        material:    analysis.material,
-        fit:         analysis.fit,
-        gender:      analysis.gender,
-        season:      analysis.season,
-        aesthetic:   analysis.aesthetic,
-        description: analysis.description,
+        category:     analysis.category,
+        color:        analysis.color,
+        color_family: analysis.color_family,
+        pattern:      analysis.pattern,
+        style_type:   analysis.style_type,
+        material:     analysis.material,
+        fit:          analysis.fit,
+        gender:       analysis.gender,
+        season:       analysis.season,
+        aesthetic:    analysis.aesthetic,
+        description:  analysis.description,
       },
       anchor_info: {
         role: anchorRole,
@@ -418,7 +428,9 @@ export async function POST(req: NextRequest) {
         excluded_roles: excludedRoles,
       },
       looks,
-      next_question: "Want me to tweak any of these looks, or try a different vibe around your piece?",
+      next_question: userMessage
+        ? `Styled around your request! Want to tweak any of these, or try a different vibe?`
+        : "Want me to tweak any of these looks, or try a different vibe around your piece?",
     });
 
   } catch (error: unknown) {

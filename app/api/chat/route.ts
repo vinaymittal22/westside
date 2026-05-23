@@ -63,6 +63,22 @@ interface SessionState {
     excluded_roles: string[]; // e.g. ["dress", "top", "bottom"]
     description?: string;
   };
+  /** Full image analysis from the uploaded anchor product — persists across turns. */
+  imageContext?: {
+    category: string;
+    color: string;
+    color_family?: string;
+    pattern: string;
+    style_type: string;
+    material: string;
+    fit: string;
+    gender: string;
+    season: string;
+    aesthetic: string;
+    description: string;
+  } | null;
+  /** "image_styling" when user is in anchor-product mode, null for normal chat. */
+  mode?: "image_styling" | null;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -184,6 +200,27 @@ function buildSessionContextMessage(session: SessionState): string {
     lines.push("");
   }
 
+  const imgCtx = session.imageContext;
+  if (imgCtx) {
+    lines.push("IMAGE CONTEXT (UPLOADED PRODUCT — PERSISTENT ACROSS THIS CONVERSATION):");
+    lines.push(`  • Product: ${imgCtx.description}`);
+    lines.push(`  • Category: ${imgCtx.category} | Color: ${imgCtx.color} (${imgCtx.color_family ?? ""}) | Pattern: ${imgCtx.pattern}`);
+    lines.push(`  • Style: ${imgCtx.style_type} | Aesthetic: ${imgCtx.aesthetic} | Fit: ${imgCtx.fit}`);
+    lines.push(`  • Material: ${imgCtx.material} | Season: ${imgCtx.season} | Gender: ${imgCtx.gender}`);
+    lines.push("  The user's uploaded product is STILL ACTIVE. All recommendations should");
+    lines.push("  coordinate with this item's color, style, and aesthetic. When building");
+    lines.push("  outfits, use this as the anchor — match colors harmoniously, keep the");
+    lines.push("  overall vibe consistent. NEVER ask the user to describe their product");
+    lines.push("  again — you already know exactly what it looks like.");
+    lines.push("");
+  }
+
+  if (session.mode === "image_styling") {
+    lines.push("MODE: IMAGE_STYLING (active until user clears or uploads new image)");
+    lines.push("  All outfit building must respect the anchor + image context above.");
+    lines.push("");
+  }
+
   if (Object.keys(profile).length > 0) {
     lines.push("USER PROFILE:");
     if (profile.gender)   lines.push(`  • Shopping for: ${profile.gender}`);
@@ -292,13 +329,21 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
   const sessionVibe = session?.userProfile?.vibe;
   const sessionBudget = session?.userProfile?.budget;
 
+  // ─── When imageContext is active, use its color/aesthetic as defaults ───
+  const imgCtx = session?.imageContext;
+  const effectiveColorPref = colorPref
+    ?? (imgCtx?.color ? [imgCtx.color.toLowerCase()] : undefined);
+  const effectiveVibe = params.vibe?.toLowerCase()
+    ?? sessionVibe
+    ?? imgCtx?.aesthetic;
+
   const ctx: OutfitContext = {
     occasion:         params.occasion?.toLowerCase() ?? sessionOccasion,
-    vibe:             params.vibe?.toLowerCase() ?? sessionVibe,
+    vibe:             effectiveVibe,
     gender:           (params.gender as "female" | "male" | undefined) ?? sessionGender ?? "female",
     budget:           params.budget ?? sessionBudget,
     anchor_sku:       resolvedAnchorSku,
-    preferred_colors: colorPref,
+    preferred_colors: effectiveColorPref,
     lock_slots:       lockSlots,
     rejected_skus:    session?.rejectedSkus,
     replace_slot:     params.replace_slot,
