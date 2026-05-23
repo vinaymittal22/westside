@@ -78,6 +78,17 @@ body {
   .chip-row::-webkit-scrollbar { display: none; }
 }
 
+/* ── INPUT BAR — always fixed at bottom ─────────────────────── */
+.bt-input-bar {
+  position: fixed !important;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1000;
+  background: var(--cream);
+  border-top: 1px solid var(--line);
+}
+
 /* Outfit product card — hover ghost preview (image scale + VIEW DETAILS overlay) */
 .bt-card:hover .bt-card-img { transform: scale(1.04); }
 .bt-card:hover .bt-card-overlay {
@@ -182,12 +193,10 @@ body {
     flex-shrink: 0;
   }
 
-  /* ── INPUT BAR — pinned at bottom via flex, safe-area aware ── */
+  /* ── INPUT BAR — fixed at bottom, safe-area aware on mobile ── */
   .bt-input-bar {
     padding: 8px 12px !important;
     padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
-    flex-shrink: 0;
-    z-index: 20;
   }
   .bt-input-inner {
     gap: 8px !important;

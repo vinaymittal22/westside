@@ -2188,7 +2188,7 @@ export default function LookbookChat() {
         <div className="bt-chat-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
 
       {/* ── BODY ─────────────────────────────────────────────────── */}
-      <div className="bt-chat-scroll" style={{ flex: 1, overflowY: "auto", padding: "24px 16px", display: "flex", flexDirection: "column", gap: 20, minHeight: 0 }}>
+      <div className="bt-chat-scroll" style={{ flex: 1, overflowY: "auto", padding: "24px 16px", paddingBottom: 140, display: "flex", flexDirection: "column", gap: 20, minHeight: 0 }}>
 
         {/* ═══ WELCOME — compact hero + icon chip rows ═══════════════ */}
         {messages.length === 0 && !loading && (() => {
@@ -2465,11 +2465,16 @@ export default function LookbookChat() {
         <div ref={bottomRef} />
       </div>
 
-      {/* ═══ INPUT BAR ════════════════════════════════════════════ */}
+      {/* ═══ INPUT BAR — fixed at bottom, always visible ═════════ */}
       <div className="bt-input-bar" style={{
-        padding: "16px 20px 20px", background: BG,
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        width: "100%",
+        zIndex: 1000,
+        background: BG,
         borderTop: `1px solid ${BORDER}`,
-        flexShrink: 0,
+        padding: "16px 20px 20px",
       }}>
         <div className="bt-input-inner" style={{ maxWidth: 900, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
 
