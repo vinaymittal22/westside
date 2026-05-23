@@ -113,17 +113,20 @@ body {
     letter-spacing: 2px !important;
   }
 
-  /* ── BODY — main panel takes full width, no horizontal scroll ── */
+  /* ── BODY — main panel takes full width, constrain height ── */
   .bt-chat-body {
-    overflow: visible !important;
+    overflow: hidden !important;
+    min-height: 0 !important;
   }
   .bt-chat-panel {
     width: 100% !important;
     max-width: 100% !important;
+    min-height: 0 !important;
   }
   .bt-chat-scroll {
     padding: 16px 14px 12px !important;
     gap: 14px !important;
+    min-height: 0 !important;
   }
 
   /* ── SIDEBAR — true slide drawer, always 84vw, slides off-screen ── */
@@ -179,12 +182,11 @@ body {
     flex-shrink: 0;
   }
 
-  /* ── INPUT BAR — pinned, safe-area aware, full-width pill ── */
+  /* ── INPUT BAR — pinned at bottom via flex, safe-area aware ── */
   .bt-input-bar {
     padding: 8px 12px !important;
     padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
-    position: sticky;
-    bottom: 0;
+    flex-shrink: 0;
     z-index: 20;
   }
   .bt-input-inner {

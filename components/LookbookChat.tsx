@@ -1982,13 +1982,13 @@ export default function LookbookChat() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: BG, display: "flex", flexDirection: "column", fontFamily: FONT_BODY }}>
+    <div style={{ height: "100dvh", background: BG, display: "flex", flexDirection: "column", fontFamily: FONT_BODY, overflow: "hidden" }}>
 
       {/* ═══ HEADER ═══════════════════════════════════════════════ */}
       <header className="bt-chat-header" style={{
         background: BG, borderBottom: `1px solid ${BORDER}`,
         padding: "12px 20px", display: "flex", alignItems: "center",
-        justifyContent: "space-between", position: "sticky", top: 0, zIndex: 30,
+        justifyContent: "space-between", zIndex: 30, flexShrink: 0,
       }}>
         {/* Left — logo + sidebar toggle on mobile */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
@@ -2077,7 +2077,7 @@ export default function LookbookChat() {
       </header>
 
       {/* ═══ BODY — sidebar + chat panel ══════════════════════════ */}
-      <div className="bt-chat-body" style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
+      <div className="bt-chat-body" style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative", minHeight: 0 }}>
 
         {/* ─── SIDEBAR ───────────────────────────────────────────── */}
         <aside
@@ -2185,10 +2185,10 @@ export default function LookbookChat() {
         )}
 
         {/* ─── CHAT PANEL ────────────────────────────────────────── */}
-        <div className="bt-chat-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div className="bt-chat-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
 
       {/* ── BODY ─────────────────────────────────────────────────── */}
-      <div className="bt-chat-scroll" style={{ flex: 1, overflowY: "auto", padding: "24px 16px", display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="bt-chat-scroll" style={{ flex: 1, overflowY: "auto", padding: "24px 16px", display: "flex", flexDirection: "column", gap: 20, minHeight: 0 }}>
 
         {/* ═══ WELCOME — compact hero + icon chip rows ═══════════════ */}
         {messages.length === 0 && !loading && (() => {
@@ -2469,6 +2469,7 @@ export default function LookbookChat() {
       <div className="bt-input-bar" style={{
         padding: "16px 20px 20px", background: BG,
         borderTop: `1px solid ${BORDER}`,
+        flexShrink: 0,
       }}>
         <div className="bt-input-inner" style={{ maxWidth: 900, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
 
