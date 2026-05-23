@@ -25,6 +25,8 @@ interface ImageAnalysis {
   occasion_suggestions: string[];
   description: string;
   stylist_message: string;
+  /** Optional: parsed from userMessage. e.g. "footwear", "bag", "accessories", "full_outfit". */
+  user_intent_slot?: string | null;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -269,7 +271,8 @@ Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
   "aesthetic": "one of: y2k-revival, urban-streetwear, smart-casual, minimal-clean, boho-coastal, preppy-collegiate, athleisure, feminine-romantic",
   "occasion_suggestions": ["3-4 occasions this pairs well with, e.g. casual-hangout, date-night, college-fest, party, brunch, office, travel"],
   "description": "One sentence describing the exact product — be specific about what you see",
-  "stylist_message": "2-3 sentences as a personal stylist reacting to this product as the user's ANCHOR piece. Mention what vibe it gives and that you'll build complete looks AROUND it. Example: 'Love this brown fitted top — it's giving effortless smart-casual energy. Let me build some complete looks around it with matching bottoms, shoes, and accessories from our collection.'"
+  "stylist_message": "2-3 sentences as a personal stylist reacting to this product as the user's ANCHOR piece. If the customer asked a specific question, ANSWER IT directly. Otherwise mention what vibe it gives and that you'll build complete looks around it.",
+  "user_intent_slot": "null OR one of: footwear, bag, necklace, sunglasses, hat, watch, full_outfit — derived from the customer's text question. Use null if no specific slot was asked about."
 }`;
 
 /* ────────────────────────────────────────────────────────────────
@@ -294,6 +297,16 @@ export async function POST(req: NextRequest) {
       userMessage?: string;   // e.g. "style this for date night" or "make it under ₹4000"
     };
 
+    // ── DIAGNOSTIC LOG: /api/image-style route handler entry ──
+    console.log("[DIAG /api/image-style] received", {
+      receivedUserMessage: userMessage ?? null,
+      receivedImage:       !!imageBase64,
+      imageMime,
+      imageBytesLen:       imageBase64?.length ?? 0,
+      genderOverride:      genderOverride ?? null,
+      sessionGender:       session?.userProfile?.gender ?? null,
+    });
+
     if (!imageBase64 || !imageMime) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
     }
@@ -308,11 +321,21 @@ export async function POST(req: NextRequest) {
     const client = getAnthropicClient();
 
     /* ── Step 1: Claude vision analyses the uploaded ANCHOR product ── */
-    // If user also typed text (e.g. "style this for date night"), append it
-    // so Claude can tailor occasion_suggestions and stylist_message.
+    // If user also typed text (e.g. "what shoes go with this?"), append it
+    // so Claude can tailor occasion_suggestions, stylist_message, and
+    // identify which specific outfit slot the user is asking about.
     let visionPrompt = IMAGE_ANALYSIS_PROMPT;
     if (userMessage) {
-      visionPrompt += `\n\nThe customer also said: "${userMessage}"\nUse this to tailor your occasion_suggestions and stylist_message. For example, if they said "date night", prioritize date-night in occasion_suggestions. If they mentioned a budget, acknowledge it.`;
+      visionPrompt += `
+
+The customer also said: "${userMessage}"
+
+USE THIS TEXT TO TAILOR YOUR RESPONSE:
+1. If they asked about a SPECIFIC slot (e.g. "what shoes go with this?", "which bag?", "what jewelry?"), set "user_intent_slot" to the exact slot keyword: "footwear", "bag", "necklace", "sunglasses", "hat", "watch", or "full_outfit".
+2. If they mentioned an occasion (e.g. "date night", "office", "brunch"), prioritize it FIRST in occasion_suggestions.
+3. If they mentioned a budget (e.g. "under ₹4000"), acknowledge it in stylist_message.
+4. Make the stylist_message DIRECTLY ANSWER the user's question — don't just describe the product. For example, if they asked "what shoes go with this dress?", say "For this yellow dress, I'd pair it with [type of shoes] — [reason]. Here are some great options from our collection."
+5. NEVER tell the user you can't see the dress or ask them to describe it — you can see it clearly in the image.`;
     }
 
     const visionResponse = await client.messages.create({

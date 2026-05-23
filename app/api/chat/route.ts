@@ -202,16 +202,25 @@ function buildSessionContextMessage(session: SessionState): string {
 
   const imgCtx = session.imageContext;
   if (imgCtx) {
-    lines.push("IMAGE CONTEXT (UPLOADED PRODUCT — PERSISTENT ACROSS THIS CONVERSATION):");
-    lines.push(`  • Product: ${imgCtx.description}`);
-    lines.push(`  • Category: ${imgCtx.category} | Color: ${imgCtx.color} (${imgCtx.color_family ?? ""}) | Pattern: ${imgCtx.pattern}`);
-    lines.push(`  • Style: ${imgCtx.style_type} | Aesthetic: ${imgCtx.aesthetic} | Fit: ${imgCtx.fit}`);
-    lines.push(`  • Material: ${imgCtx.material} | Season: ${imgCtx.season} | Gender: ${imgCtx.gender}`);
-    lines.push("  The user's uploaded product is STILL ACTIVE. All recommendations should");
-    lines.push("  coordinate with this item's color, style, and aesthetic. When building");
-    lines.push("  outfits, use this as the anchor — match colors harmoniously, keep the");
-    lines.push("  overall vibe consistent. NEVER ask the user to describe their product");
-    lines.push("  again — you already know exactly what it looks like.");
+    lines.push("ACTIVE PRODUCT CONTEXT (user is styling THIS specific item):");
+    lines.push(`  - Category: ${imgCtx.category}`);
+    lines.push(`  - Color: ${imgCtx.color}${imgCtx.color_family ? ` (${imgCtx.color_family})` : ""}`);
+    lines.push(`  - Pattern: ${imgCtx.pattern}`);
+    lines.push(`  - Style: ${imgCtx.style_type}`);
+    lines.push(`  - Aesthetic: ${imgCtx.aesthetic}`);
+    lines.push(`  - Fit: ${imgCtx.fit}`);
+    lines.push(`  - Material: ${imgCtx.material}`);
+    lines.push(`  - Season: ${imgCtx.season}`);
+    lines.push(`  - Gender: ${imgCtx.gender}`);
+    lines.push(`  - Description: ${imgCtx.description}`);
+    lines.push("");
+    lines.push("CRITICAL: The user's questions refer to THIS item unless they explicitly");
+    lines.push("mention a different product. NEVER ask the user to describe or share the");
+    lines.push("item — you already have it. NEVER say 'I haven't seen the dress' or 'I");
+    lines.push("can't see the image' — the product details above ARE the image content.");
+    lines.push("When the user asks 'what shoes go with this' or 'show me a bag for this',");
+    lines.push("they mean THIS uploaded item. Coordinate recommendations with its color,");
+    lines.push("style, and aesthetic.");
     lines.push("");
   }
 
@@ -559,6 +568,15 @@ export async function POST(req: NextRequest) {
       action_params?: Record<string, unknown>;
     } = body;
 
+    // ── DIAGNOSTIC LOG #2: /api/chat route handler entry ──
+    console.log("[DIAG /api/chat] received", {
+      receivedImageContext: session.imageContext ?? null,
+      receivedAnchor:       session.anchor ?? null,
+      mode:                 session.mode ?? null,
+      userMessage:          message,
+      hasAction:            !!action,
+    });
+
     // ─── FAST PATH: client confirms a slot swap by tapping an option card
     //     → skip Claude entirely; just swap that ONE slot in the existing outfit.
     //     NEVER regenerate the full outfit — keep every other slot exactly as-is.
@@ -692,6 +710,11 @@ export async function POST(req: NextRequest) {
     if (sessionContext) {
       systemBlocks.push({ type: "text", text: sessionContext });
     }
+
+    // ── DIAGNOSTIC LOG #3: full system prompt right before SDK call ──
+    console.log("[DIAG /api/chat] system prompt to Claude:\n",
+      systemBlocks.map((b, i) => `--- BLOCK ${i} (cache_control=${(b as Anthropic.TextBlockParam).cache_control ? "ephemeral" : "none"}) ---\n${b.text}`).join("\n\n")
+    );
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-5",
