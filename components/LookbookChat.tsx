@@ -1591,6 +1591,7 @@ function deriveSessionUpdate(parsed: ParsedResponse, prev: SessionState): Sessio
     userProfile: { ...prev.userProfile },
     rejectedSkus: [...prev.rejectedSkus],
     likedSkus: [...prev.likedSkus],
+    anchor: prev.anchor ?? null,   // PRESERVE anchor across chat turns
   };
   // OUTFIT → store all slots as current
   if (parsed.type === "outfit") {

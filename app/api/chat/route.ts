@@ -515,31 +515,86 @@ export async function POST(req: NextRequest) {
     } = body;
 
     // ─── FAST PATH: client confirms a slot swap by tapping an option card
-    //     → skip Claude entirely, rebuild outfit with all slots locked
+    //     → skip Claude entirely; just swap that ONE slot in the existing outfit.
+    //     NEVER regenerate the full outfit — keep every other slot exactly as-is.
     if (action === "confirm_replacement") {
       const sel = action_params as { replace_slot: string; selected_sku: string };
       if (!sel?.replace_slot || !sel?.selected_sku || !session.currentOutfit) {
         return NextResponse.json(fallback("invalid confirm_replacement payload"), { status: 200 });
       }
-      const lockSlots: Record<string, string> = {};
-      for (const [role, item] of Object.entries(session.currentOutfit)) {
-        if (role !== sel.replace_slot && item?.sku) lockSlots[role] = item.sku;
+
+      // Look up the selected product from the catalogue
+      const newProduct = CATALOGUE_BY_ID[sel.selected_sku];
+      if (!newProduct) {
+        return NextResponse.json(fallback("selected SKU not found in catalogue"), { status: 200 });
       }
-      lockSlots[sel.replace_slot] = sel.selected_sku;
-      const updated = buildOutfit({
-        occasion: session.userProfile?.occasion,
-        vibe:     session.userProfile?.vibe,
-        gender:   (session.userProfile?.gender as "female" | "male" | undefined) ?? "female",
-        lock_slots: lockSlots,
-        rejected_skus: session.rejectedSkus,
-      });
-      if (!updated) return NextResponse.json(fallback("buildOutfit null on confirm"), { status: 200 });
-      // If user is in anchor mode (uploaded an item), strip out same-category
-      // slots the engine may have auto-filled (e.g. a top/bottom alongside their dress).
+
+      // Build the updated outfit by keeping every existing slot and only
+      // replacing the one the user tapped. No engine call, no regeneration.
+      const existingOutfit = { ...session.currentOutfit };
+      const updatedOutfitDisplay: Record<string, unknown> = {};
+      let total = 0;
+
+      for (const [role, item] of Object.entries(existingOutfit)) {
+        if (role === sel.replace_slot) {
+          // This is the slot being swapped — use the new product
+          updatedOutfitDisplay[role] = {
+            sku:          newProduct.id,
+            name:         newProduct.name,
+            price:        newProduct.price,
+            note:         "Your pick",
+            emoji:        emojiFor(role),
+            url:          newProduct.url,
+            img:          newProduct.image,
+            colors:       newProduct.color ?? [],
+            color_family: newProduct.color_family,
+          };
+          total += newProduct.price;
+        } else if (item?.sku) {
+          // Keep this slot exactly as-is — look up full product details
+          const existingProduct = CATALOGUE_BY_ID[item.sku];
+          if (existingProduct) {
+            updatedOutfitDisplay[role] = {
+              sku:          existingProduct.id,
+              name:         existingProduct.name,
+              price:        existingProduct.price,
+              note:         item.name ? `Keeping: ${item.name}` : "",
+              emoji:        emojiFor(role),
+              url:          existingProduct.url,
+              img:          existingProduct.image,
+              colors:       existingProduct.color ?? [],
+              color_family: existingProduct.color_family,
+            };
+            total += existingProduct.price;
+          }
+        }
+      }
+
+      // If the replace_slot wasn't in the existing outfit (edge case), add it
+      if (!existingOutfit[sel.replace_slot]) {
+        updatedOutfitDisplay[sel.replace_slot] = {
+          sku:          newProduct.id,
+          name:         newProduct.name,
+          price:        newProduct.price,
+          note:         "Your pick",
+          emoji:        emojiFor(sel.replace_slot),
+          url:          newProduct.url,
+          img:          newProduct.image,
+          colors:       newProduct.color ?? [],
+          color_family: newProduct.color_family,
+        };
+        total += newProduct.price;
+      }
+
       return NextResponse.json({
         type: "outfit",
         message: "Locked in 🔥 Your updated look:",
-        ...applyAnchorFilter(outfitToChat(updated), session.anchor),
+        occasion: session.userProfile?.occasion ?? "",
+        vibe:     session.userProfile?.vibe ?? "",
+        outfit:   updatedOutfitDisplay,
+        total,
+        budget_note: `Complete-the-look total: ₹${total.toLocaleString("en-IN")}`,
+        style_notes: null,
         next_question: "Refine anything else, or shop the look?",
       });
     }
