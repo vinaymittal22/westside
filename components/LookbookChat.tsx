@@ -304,16 +304,30 @@ interface ChatMessage {
 
 /* ── Helper: filter catalogue by chat category string ─────────── */
 function chatCategoryFilter(cat: string, gender: string) {
+  const lower = cat.toLowerCase();
   return catalogueProducts.filter(p => {
     const pc = p.category.toLowerCase();
+    const tags = (p.tags ?? []).map(t => t.toLowerCase());
     const catMatch = (() => {
-      switch (cat.toLowerCase()) {
-        case "tops":        return pc === "t-shirts" || pc === "tops";
-        case "bottoms":     return pc === "bottoms" || pc === "skirts" || pc === "denims";
-        case "dresses":     return pc === "dresses";
-        case "footwear":    return pc === "footwear";
-        case "accessories": return pc === "accessories";
-        default:            return true;
+      switch (lower) {
+        case "tops": case "top":            return pc === "t-shirts" || pc === "tops";
+        case "bottoms": case "bottom":      return pc === "bottoms" || pc === "skirts" || pc === "denims";
+        case "dresses": case "dress":       return pc === "dresses";
+        case "footwear": case "shoes":      return pc === "footwear";
+        case "accessories": case "accessory":
+          return pc === "accessories";
+        // Fine-grained sub-categories — match Accessories + relevant tag
+        case "bags": case "bag": case "handbag": case "handbags": case "clutch": case "purse":
+          return pc === "accessories" && tags.some(t => t.includes("bag") || t.includes("clutch") || t.includes("purse"));
+        case "necklaces": case "necklace": case "jewelry": case "jewellery": case "earrings": case "bracelet": case "bracelets":
+          return pc === "accessories" && tags.some(t => t.includes("necklace") || t.includes("earring") || t.includes("bracelet") || t.includes("jewel"));
+        case "sunglasses": case "eyewear":
+          return pc === "accessories" && tags.some(t => t.includes("sunglass") || t.includes("eyewear"));
+        case "watches": case "watch":
+          return pc === "accessories" && tags.some(t => t.includes("watch"));
+        case "hats": case "hat": case "cap":
+          return pc === "accessories" && tags.some(t => t.includes("hat") || t.includes("cap"));
+        default:                            return true;
       }
     })();
     const genderMatch = gender === "all" || gender === "" || p.gender === gender || p.gender === "unisex";

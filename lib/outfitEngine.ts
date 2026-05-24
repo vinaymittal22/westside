@@ -459,13 +459,46 @@ export function browseCategory(
   category: string,
   opts: { gender?: string; colors?: string[]; limit?: number } = {},
 ): EnrichedProduct[] {
-  const cat = category.toLowerCase();
+  const cat = category.toLowerCase().trim();
+  // Map both broad category names ("Accessories") and fine-grained
+  // sub-categories ("Necklaces", "Bags", "Sunglasses") to product_type.
+  // This prevents bags/earrings/hats from showing when the user asked
+  // specifically for, e.g., necklaces.
   const wantedTypes: Record<string, string[]> = {
+    // ── Broad categories ──
     "tops":        ["TOP"],
+    "top":         ["TOP"],
     "bottoms":     ["BOTTOM"],
+    "bottom":      ["BOTTOM"],
     "dresses":     ["DRESS"],
+    "dress":       ["DRESS"],
     "footwear":    ["FOOTWEAR"],
+    "shoes":       ["FOOTWEAR"],
     "accessories": ["BAG", "JEWELRY", "EYEWEAR", "WATCH", "HAT"],
+    "accessory":   ["BAG", "JEWELRY", "EYEWEAR", "WATCH", "HAT"],
+
+    // ── Fine-grained sub-categories ──
+    "bags":        ["BAG"],
+    "bag":         ["BAG"],
+    "handbag":     ["BAG"],
+    "handbags":    ["BAG"],
+    "clutch":      ["BAG"],
+    "purse":       ["BAG"],
+    "jewelry":     ["JEWELRY"],
+    "jewellery":   ["JEWELRY"],
+    "necklace":    ["JEWELRY"],
+    "necklaces":   ["JEWELRY"],
+    "earrings":    ["JEWELRY"],
+    "bracelet":    ["JEWELRY"],
+    "bracelets":   ["JEWELRY"],
+    "sunglasses":  ["EYEWEAR"],
+    "eyewear":     ["EYEWEAR"],
+    "watch":       ["WATCH"],
+    "watches":     ["WATCH"],
+    "hat":         ["HAT"],
+    "hats":        ["HAT"],
+    "cap":         ["HAT"],
+
     "all":         ["TOP", "BOTTOM", "DRESS", "FOOTWEAR", "BAG", "JEWELRY", "EYEWEAR"],
   };
   const types = wantedTypes[cat] ?? wantedTypes["all"];
