@@ -15,6 +15,48 @@ import { products as allProducts } from "@/data/products";
 import { catalogueProducts } from "@/data/catalogue";
 import { Product } from "@/types";
 
+/* ──────────────────────────────────────────────────────────────
+   BROKEN-IMAGE GUARD
+   When a product image fails to load (404, CORS, etc.) we add its
+   SKU to a module-level Set. Cards check this set on every render
+   and bail out (return null) so broken products never display.
+   Renderers also pre-filter their data using this set.
+   ────────────────────────────────────────────────────────────── */
+const brokenSkus = new Set<string>();
+const brokenSkusListeners = new Set<() => void>();
+
+function markSkuBroken(sku?: string | null) {
+  if (!sku || brokenSkus.has(sku)) return;
+  brokenSkus.add(sku);
+  // notify all subscribers so dependent renderers re-evaluate
+  brokenSkusListeners.forEach(fn => fn());
+}
+
+function useBrokenSkus(): Set<string> {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const listener = () => force(x => x + 1);
+    brokenSkusListeners.add(listener);
+    return () => { brokenSkusListeners.delete(listener); };
+  }, []);
+  return brokenSkus;
+}
+
+/** Returns true when the URL looks like a usable HTTP(S) image URL. */
+function hasValidImageUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (trimmed.length < 8) return false;
+  return trimmed.startsWith("http://") || trimmed.startsWith("https://");
+}
+
+/** True when this product/item should be hidden from the chat. */
+function isHiddenProduct(sku?: string, imgUrl?: string | null): boolean {
+  if (sku && brokenSkus.has(sku)) return true;
+  if (!hasValidImageUrl(imgUrl)) return true;
+  return false;
+}
+
 /* ── Palette — editorial cream theme ─────────────────────────── */
 const BG     = "#F0EBE0";   // cream paper background
 const CARD   = "#F5F1E8";   // soft cream card
@@ -365,8 +407,13 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
   const [pickedSize,  setPickedSize]  = useState<string | null>(null);
   const { addItem: addToCart, isInCart } = useCart();
   const { toggleItem, isWishlisted } = useWishlist();
+  // Subscribe to broken-SKU updates so a card disappears if its image
+  // fails AFTER first render somewhere else (e.g. shown again later).
+  useBrokenSkus();
 
   if (!item?.name) return null;
+  // Skip products that have no valid image URL or already errored.
+  if (isHiddenProduct(item.sku, item.img)) return null;
 
   const product   = buildProduct(item, section);
   const inCart    = isInCart(item.sku);
@@ -445,7 +492,7 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
               objectFit: "cover", objectPosition: "top center",
               transition: "transform 350ms cubic-bezier(0.16,1,0.3,1)",
             }}
-            onError={() => setImgError(true)}
+            onError={() => { setImgError(true); markSkuBroken(item.sku); }}
           />
         ) : (
           <span style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 28 }}>
@@ -664,9 +711,22 @@ function OutfitBlock({
 }) {
   // mute unused-var TS for style_notes (kept in API contract, hidden from UI)
   void style_notes;
-  // All available items in display order — every slot is its own key
-  // Order: dress first if present (replaces top+bottom), else top → bottom → rest
-  const allKeys = (["dress", "top", "bottom", "footwear", "bag", "sunglasses", "necklace", "hat", "watch"] as const).filter(k => outfit?.[k]?.name);
+  // Subscribe to broken-SKU updates so this block re-renders (and recomputes
+  // visible keys + total) when an image fails to load.
+  useBrokenSkus();
+  // All available items in display order — every slot is its own key.
+  // Order: dress first if present (replaces top+bottom), else top → bottom → rest.
+  // Filter out slots whose product has no usable image / already-broken SKU.
+  const allKeys = (["dress", "top", "bottom", "footwear", "bag", "sunglasses", "necklace", "hat", "watch"] as const)
+    .filter(k => {
+      const it = outfit?.[k];
+      if (!it?.name) return false;
+      if (isHiddenProduct(it.sku, it.img)) return false;
+      return true;
+    });
+
+  // Recompute visible total from only the items we'll actually display.
+  const visibleTotal = allKeys.reduce((sum, k) => sum + (outfit[k]?.price ?? 0), 0);
 
   // Items that need size selection (not "one size")
   const sizableKeys = allKeys.filter(k => {
@@ -864,7 +924,7 @@ function OutfitBlock({
             <div>
               <div style={{ color: MUTED, fontSize: 9, fontFamily: "'JetBrains Mono','Courier New',monospace", letterSpacing: 2.5, fontWeight: 600 }}>TOTAL</div>
               <div style={{ color: TEXT, fontSize: 24, fontWeight: 800, fontFamily: "'JetBrains Mono','Courier New',monospace", marginTop: 2 }}>
-                ₹{(total || 0).toLocaleString("en-IN")}
+                ₹{(visibleTotal || total || 0).toLocaleString("en-IN")}
               </div>
               <div style={{ color: MUTED, fontSize: 11, marginTop: 2, fontStyle: "italic" }}>{budget_note}</div>
             </div>
@@ -1204,11 +1264,16 @@ function MiniProductCard({ product }: { product: Product & { colors?: string[]; 
   const { toggleItem, isWishlisted } = useWishlist();
   const [added, setAdded] = useState(false);
   const [showSizes, setShowSizes] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  useBrokenSkus();
   const sizeList = product.sizes ?? [];
   const needsSize = sizeList[0] !== "one size" && sizeList.length > 1;
   const inCart = isInCart(product.id);
   const wished = isWishlisted(product.id);
   const productColors = product.colors;
+
+  // Skip products without a usable image URL or already-known-broken SKUs.
+  if (isHiddenProduct(product.id, product.image)) return null;
 
   function addWithSize(sz: string) {
     addItem(product, sz);
@@ -1242,9 +1307,11 @@ function MiniProductCard({ product }: { product: Product & { colors?: string[]; 
     >
       {/* Image */}
       <div style={{ position: "relative", width: "100%", paddingBottom: "120%", background: CARD, overflow: "hidden" }}>
-        {product.image ? (
+        {product.image && !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={product.image} alt={product.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }} />
+          <img src={product.image} alt={product.name}
+            onError={() => { setImgError(true); markSkuBroken(product.id); }}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }} />
         ) : (
           <span style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 24 }}>👚</span>
         )}
@@ -1305,10 +1372,11 @@ function MiniProductCard({ product }: { product: Product & { colors?: string[]; 
 
 /* ── Products renderer — in-chat catalogue browsing ──────────── */
 function ProductsRenderer({ data, onQuickReply }: { data: ProductsData; onQuickReply: (t: string) => void }) {
+  useBrokenSkus();
   // Prefer API-provided products (engine output) — they include the burnt-toast.com URL.
   // Fallback to local catalogue filter if API didn't provide any.
   type ProductWithExtras = Product & { url?: string; colors?: string[] };
-  const results: ProductWithExtras[] = data.products && data.products.length > 0
+  const allResults: ProductWithExtras[] = data.products && data.products.length > 0
     ? data.products.map(p => ({
         id: p.sku,
         name: p.name,
@@ -1327,6 +1395,8 @@ function ProductsRenderer({ data, onQuickReply }: { data: ProductsData; onQuickR
       } as ProductWithExtras))
     : (chatCategoryFilter(data.category ?? "all", data.gender ?? "all").slice(0, 12)
         .map(p => ({ ...p, colors: p.color ?? [] } as ProductWithExtras)));
+  // Hide any product without a usable image URL or already-known-broken.
+  const results = allResults.filter(p => !isHiddenProduct(p.id, p.image));
 
   const catLabel = data.category === "all" ? "Collection" : data.category;
 
@@ -1382,8 +1452,11 @@ function ReplaceOptionsRenderer({
   onQuickReply: (t: string) => void;
   onSelectReplacement: (slot: string, sku: string, name: string) => void;
 }) {
+  useBrokenSkus();
   const slotMeta = SECTION_META[data.replace_slot] ?? { label: data.replace_slot.toUpperCase(), color: ACCENT };
   const lockedRoles = Object.keys(data.locked_outfit ?? {});
+  // Filter out options without a valid image or with a broken SKU.
+  const visibleOptions = data.options.filter(p => !isHiddenProduct(p.sku, p.img));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1425,7 +1498,7 @@ function ReplaceOptionsRenderer({
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ flex: 1, height: 1, background: BORDER }} />
         <span style={{ color: slotMeta.color, fontSize: 9, fontWeight: 900, letterSpacing: 3, fontFamily: "'Courier New',monospace", whiteSpace: "nowrap" }}>
-          {data.options.length} NEW {slotMeta.label} OPTIONS
+          {visibleOptions.length} NEW {slotMeta.label} OPTIONS
         </span>
         <div style={{ flex: 1, height: 1, background: BORDER }} />
       </div>
@@ -1433,7 +1506,7 @@ function ReplaceOptionsRenderer({
       {/* Option cards — horizontal scroll */}
       <div style={{ overflowX: "auto", paddingBottom: 6 }}>
         <div style={{ display: "flex", gap: 8, minWidth: "max-content" }}>
-          {data.options.map(p => (
+          {visibleOptions.map(p => (
             <ReplaceOptionCard
               key={p.sku}
               product={p}
@@ -1465,8 +1538,12 @@ function ReplaceOptionCard({
   onChoose: () => void;
 }) {
   const [imgError, setImgError] = useState(false);
+  useBrokenSkus();
   const { toggleItem, isWishlisted } = useWishlist();
   const wished = isWishlisted(product.sku);
+
+  // Hide cards with no valid image or whose image already failed elsewhere.
+  if (isHiddenProduct(product.sku, product.img)) return null;
 
   function openOriginal(e: React.MouseEvent) {
     e.stopPropagation();
@@ -1490,7 +1567,7 @@ function ReplaceOptionCard({
         {product.img && !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={product.img} alt={product.name}
-            onError={() => setImgError(true)}
+            onError={() => { setImgError(true); markSkuBroken(product.sku); }}
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }} />
         ) : (
           <span style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 24 }}>👚</span>
