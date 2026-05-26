@@ -243,6 +243,26 @@ Triggers (when SESSION MEMORY shows a current outfit):
   "show me 3 different tops"  → replace_options, replace_slot=top
   "swap the dress"            → replace_options, replace_slot=dress
 
+FOOTWEAR SUBTYPE FILTER — slot_filter field:
+If the user explicitly names a SPECIFIC footwear type, add "slot_filter" to
+params so only that subtype is returned (not all footwear mixed together).
+
+  "show more sneakers"        → replace_slot=footwear, slot_filter="sneaker"
+  "different sneakers"        → replace_slot=footwear, slot_filter="sneaker"
+  "show me sandals"           → replace_slot=footwear, slot_filter="sandal"
+  "try some loafers"          → replace_slot=footwear, slot_filter="loafer"
+  "show heels"                → replace_slot=footwear, slot_filter="heel"
+  "flat sandals please"       → replace_slot=footwear, slot_filter="flat sandal"
+  "mary janes"                → replace_slot=footwear, slot_filter="mary jane"
+  "show me boots"             → replace_slot=footwear, slot_filter="boot"
+  "any ballerinas?"           → replace_slot=footwear, slot_filter="ballerina"
+  "different shoes" (generic) → replace_slot=footwear  (NO slot_filter — any footwear ok)
+  "change the shoes" (generic)→ replace_slot=footwear  (NO slot_filter — any footwear ok)
+
+slot_filter values: "sneaker" | "sandal" | "loafer" | "heel" | "flat sandal" |
+                    "mary jane" | "boot" | "ballerina" | "mule" | "platform"
+Only set slot_filter when user EXPLICITLY names a footwear subtype.
+
 ALWAYS acknowledge what stays the same in the message:
   GOOD: "Keeping your jeans, sneakers, and bag — here are some new tops ✨"
   BAD:  "Here are some tops" (doesn't reassure user the rest is locked)

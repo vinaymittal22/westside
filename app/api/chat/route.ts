@@ -387,6 +387,27 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
     ?? sessionVibe
     ?? imgCtx?.aesthetic;
 
+  // ─── Footwear subtype filter ─────────────────────────────────────────────
+  // Claude returns slot_filter when user explicitly asks for a specific
+  // footwear subtype ("show more sneakers" → slot_filter="sneaker").
+  // Map the curator keyword to a regex string applied inside the engine.
+  const FOOTWEAR_SUBTYPE_MAP: Record<string, string> = {
+    "sneaker":     "sneaker|trainer",
+    "sandal":      "sandal",
+    "flat sandal": "flat sandal|flat",
+    "loafer":      "loafer",
+    "heel":        "heel",
+    "boot":        "boot",
+    "mary jane":   "mary jane",
+    "ballerina":   "ballerina|ballet",
+    "mule":        "mule",
+    "platform":    "platform",
+  };
+  const rawSlotFilter = (params as Record<string, unknown>).slot_filter as string | undefined;
+  const nameFilter = rawSlotFilter
+    ? (FOOTWEAR_SUBTYPE_MAP[rawSlotFilter.toLowerCase()] ?? rawSlotFilter.toLowerCase())
+    : undefined;
+
   const ctx: OutfitContext = {
     occasion:         params.occasion?.toLowerCase() ?? sessionOccasion,
     vibe:             effectiveVibe,
@@ -397,6 +418,7 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
     lock_slots:       lockSlots,
     rejected_skus:    session?.rejectedSkus,
     replace_slot:     params.replace_slot,
+    name_filter:      nameFilter,
   };
 
   switch (intent.intent) {

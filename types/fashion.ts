@@ -122,4 +122,10 @@ export interface OutfitContext {
   rejected_skus?: string[];
   /** For multi: which slot to vary across the N outfits (e.g. "top" → 3 different tops) */
   replace_slot?: string;
+  /**
+   * Optional keyword to sub-filter candidates within a slot's product_type.
+   * Applied as a case-insensitive name/tag match.
+   * Example: replace_slot="footwear" + name_filter="sneaker" → only sneakers shown.
+   */
+  name_filter?: string;
 }

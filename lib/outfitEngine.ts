@@ -408,12 +408,21 @@ function buildVariationsForSlot(ctx: OutfitContext, replaceSlot: string, count: 
 
   // Find top N alternative products for the replace slot (different from base.product, not rejected)
   const rejected = new Set([slotMeta.product.id, ...(ctx.rejected_skus ?? [])]);
-  const sameType = CATALOGUE.filter(p =>
+  let sameType = CATALOGUE.filter(p =>
     p.product_type === slotMeta.product.product_type &&
     !rejected.has(p.id) &&
     !OUTFIT_BLOCKLIST.test(p.name) &&
     (!ctx.gender || ctx.gender === "unisex" || !p.gender || p.gender === "unisex" || p.gender === ctx.gender)
   );
+
+  // ── Subtype filter (e.g. user asked for "sneakers" specifically) ──────────
+  if (ctx.name_filter) {
+    const nameRe = new RegExp(ctx.name_filter, "i");
+    const filtered = sameType.filter(
+      p => nameRe.test(p.name) || (p.tags ?? []).some(t => nameRe.test(t))
+    );
+    if (filtered.length > 0) sameType = filtered;
+  }
 
   // Score each candidate (using a dummy "already picked" of the locked items)
   const lockedProducts: EnrichedProduct[] = base.slots.filter(s => s.role !== replaceSlot).map(s => s.product);
@@ -557,6 +566,19 @@ export function getReplaceAlternatives(
     !OUTFIT_BLOCKLIST.test(p.name) &&
     (!ctx.gender || ctx.gender === "unisex" || !p.gender || p.gender === "unisex" || p.gender === ctx.gender)
   );
+
+  // ── Subtype filter ────────────────────────────────────────────────────────
+  // If the user explicitly asked for a specific footwear type (e.g. "sneakers"),
+  // restrict candidates to those whose name/tags match the keyword.
+  // Falls back to the full candidate list if the filter yields nothing
+  // (so we never return an empty shelf due to sparse catalogue data).
+  if (ctx.name_filter) {
+    const nameRe = new RegExp(ctx.name_filter, "i");
+    const filtered = candidates.filter(
+      p => nameRe.test(p.name) || (p.tags ?? []).some(t => nameRe.test(t))
+    );
+    if (filtered.length > 0) candidates = filtered;
+  }
 
   // Resolve vibe + "already picked" context for scoring
   const vibe: Aesthetic = (ctx.vibe && (ctx.vibe as Aesthetic) in AESTHETIC_LABEL)
