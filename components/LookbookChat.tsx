@@ -2102,8 +2102,8 @@ export default function LookbookChat() {
       if (!parsed) {
         const rawMsg = data.message || "";
         const safeMessage = rawMsg.trimStart().startsWith("{")
-          ? "Toastie's brain had a moment — try asking again! No cap it'll hit different next time 😅"
-          : (rawMsg || "Something went wrong — try again!");
+          ? "Let me try that again — what occasion or vibe are you styling for?"
+          : (rawMsg || "Connection hiccup — give that another try in a sec.");
         const fallback: ChatData = { type: "chat", message: safeMessage };
         setMessages(prev => [...prev, { role: "assistant", content: safeMessage, parsed: fallback }]);
       } else {

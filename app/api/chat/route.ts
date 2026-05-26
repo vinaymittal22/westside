@@ -271,32 +271,72 @@ function buildSessionContextMessage(session: SessionState): string {
 /* ────────────────────────────────────────────────────────────────
    Parse Claude's intent response safely
    ──────────────────────────────────────────────────────────────── */
+/**
+ * Try hard to extract a valid intent JSON object from Claude's response.
+ * Handles: bare JSON, fenced code blocks, prose+JSON, JSON+prose, and
+ * multiple `{...}` blocks (uses the first parseable one with an `intent`).
+ */
 function parseIntent(raw: string): ClaudeIntent | null {
-  try {
-    const cleaned = raw
-      .trim()
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/, "")
-      .trim();
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const obj = JSON.parse(match[0]);
-    if (!obj.intent) return null;
-    return obj as ClaudeIntent;
-  } catch {
-    return null;
+  if (!raw || typeof raw !== "string") return null;
+
+  // Strip markdown fences anywhere in the text
+  const cleaned = raw
+    .replace(/```(?:json)?\s*/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  // Find every {...} candidate (greedy, balanced-ish)
+  // Try the largest first (most likely the full intent object).
+  const candidates: string[] = [];
+  // largest match first
+  const greedy = cleaned.match(/\{[\s\S]*\}/);
+  if (greedy) candidates.push(greedy[0]);
+  // also try smaller blocks in case the response has multiple JSON-like fragments
+  const allBlocks = cleaned.match(/\{[^{}]*"intent"[^{}]*\}/g) ?? [];
+  candidates.push(...allBlocks);
+
+  for (const candidate of candidates) {
+    try {
+      const obj = JSON.parse(candidate);
+      if (obj && typeof obj.intent === "string") {
+        return obj as ClaudeIntent;
+      }
+    } catch {
+      // try next candidate
+    }
   }
+
+  return null;
+}
+
+/**
+ * Check whether the raw text looks like a normal conversational reply
+ * (not JSON, not garbled). If so, we can surface it directly as a chat
+ * bubble instead of showing the generic "had a moment" fallback.
+ */
+function looksLikeConversation(raw: string): boolean {
+  if (!raw || typeof raw !== "string") return false;
+  const trimmed = raw.trim();
+  if (trimmed.length < 2 || trimmed.length > 800) return false;
+  // Reject obvious JSON garbage
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return false;
+  // Must contain some letters
+  if (!/[a-zA-Z]/.test(trimmed)) return false;
+  return true;
 }
 
 /* ────────────────────────────────────────────────────────────────
    Fallback if Claude or engine fails
+   Used for unrecoverable internal errors (missing SKU, invalid action
+   payload, etc.). Conversational text and unknown intents are now
+   handled by separate, friendlier recovery paths in the POST handler.
    ──────────────────────────────────────────────────────────────── */
 function fallback(reason?: string) {
   console.error("[/api/chat] fallback:", reason);
   return {
     type: "chat",
-    message: "Toastie had a moment fr — try asking again! What occasion are we styling?",
-    quick_replies: ["☀️ Casual Hangout", "💃 Party Night", "💼 Work Day", "👗 Show Me Dresses", "👟 Show Me Footwear"],
+    message: "Hmm, that didn't go through. Want to try a different vibe or occasion?",
+    quick_replies: ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses", "👟 Show me footwear"],
   };
 }
 
@@ -538,8 +578,20 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
       };
     }
 
-    default:
-      return fallback(`unknown intent: ${(intent as { intent: string }).intent}`);
+    default: {
+      // Unknown intent — if Claude still gave us a message, use it
+      // instead of the generic "had a moment" reply.
+      console.warn("[/api/chat] unknown intent:", (intent as { intent: string }).intent);
+      const fallbackMessage = intent.message?.trim()
+        || "Let me try that another way — what occasion or vibe are you after?";
+      return {
+        type: "chat",
+        message: fallbackMessage,
+        quick_replies: intent.quick_replies?.length
+          ? intent.quick_replies
+          : ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses"],
+      };
+    }
   }
 }
 
@@ -716,15 +768,32 @@ export async function POST(req: NextRequest) {
       systemBlocks.map((b, i) => `--- BLOCK ${i} (cache_control=${(b as Anthropic.TextBlockParam).cache_control ? "ephemeral" : "none"}) ---\n${b.text}`).join("\n\n")
     );
 
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-5",
-      system: systemBlocks,
-      messages,
-      max_tokens: 600,
-    });
+    // Helper: single call to Claude (used twice for empty-response retry)
+    const askClaude = async () => {
+      const r = await client.messages.create({
+        model: "claude-sonnet-4-5",
+        system: systemBlocks,
+        messages,
+        max_tokens: 600,
+      });
+      const text = r.content
+        .filter(b => b.type === "text")
+        .map(b => (b as { type: "text"; text: string }).text)
+        .join("") ?? "";
+      return { response: r, rawText: text };
+    };
+
+    // First attempt
+    let { response, rawText } = await askClaude();
+
+    // Retry ONCE if Claude returned an empty body (rare but it happens
+    // — usually a transient platform hiccup).
+    if (!rawText) {
+      console.warn("[/api/chat] empty response; retrying once...");
+      ({ response, rawText } = await askClaude());
+    }
 
     // Cache verification logging — confirms caching is actually working.
-    // Read these on every response for the first few days, then remove or downgrade to debug-only.
     const usage = response.usage as typeof response.usage & {
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
@@ -736,15 +805,39 @@ export async function POST(req: NextRequest) {
       output_tokens: usage.output_tokens,
     });
 
-    const rawText = response.content
-      .filter(b => b.type === "text")
-      .map(b => (b as { type: "text"; text: string }).text)
-      .join("") ?? "";
-
-    if (!rawText) return NextResponse.json(fallback("empty Claude response"), { status: 200 });
+    // If still empty after retry → friendly recovery
+    if (!rawText) {
+      console.error("[/api/chat] empty response after retry");
+      return NextResponse.json({
+        type: "chat",
+        message: "Hmm, didn't catch that. Could you rephrase — what occasion or vibe are you styling for?",
+        quick_replies: ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses"],
+      }, { status: 200 });
+    }
 
     const intent = parseIntent(rawText);
-    if (!intent) return NextResponse.json(fallback("intent parse failed"), { status: 200 });
+
+    // ── RECOVERY 1: Claude returned conversational text without JSON ──
+    // Don't drop to the generic "had a moment" message — just SHOW
+    // Claude's actual reply as a chat bubble. The user got a real answer,
+    // they just didn't get a structured outfit (which is fine for
+    // conversational/clarifying turns).
+    if (!intent) {
+      console.warn("[/api/chat] intent parse failed; falling back to conversational reply. Raw text:", rawText.slice(0, 300));
+      if (looksLikeConversation(rawText)) {
+        return NextResponse.json({
+          type: "chat",
+          message: rawText.trim(),
+          quick_replies: ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses"],
+        }, { status: 200 });
+      }
+      // Garbled output → friendly fallback (still better than "had a moment")
+      return NextResponse.json({
+        type: "chat",
+        message: "Let me try again — what occasion or vibe are you styling for?",
+        quick_replies: ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses"],
+      }, { status: 200 });
+    }
 
     const resolved = resolveIntent(intent, session);
     return NextResponse.json({ ...resolved, _raw: rawText });
@@ -752,6 +845,12 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[/api/chat] error:", msg);
-    return NextResponse.json({ ...fallback(msg), _debugError: msg }, { status: 200 });
+    // Friendlier user-facing message for transient API/network failures
+    return NextResponse.json({
+      type: "chat",
+      message: "Connection hiccup — give that another try in a sec.",
+      quick_replies: ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses"],
+      _debugError: msg,
+    }, { status: 200 });
   }
 }
