@@ -13,6 +13,7 @@ import {
 } from "@/lib/outfitEngine";
 import { explainOutfit } from "@/lib/styleExplainer";
 import { GeneratedOutfit, OutfitContext } from "@/types/fashion";
+import { checkRateLimit, maybeSweepRateLimitBuckets } from "@/utils/rateLimit";
 
 /* ────────────────────────────────────────────────────────────────
    Types
@@ -599,6 +600,17 @@ function resolveIntent(intent: ClaudeIntent, session?: SessionState) {
    POST /api/chat
    ──────────────────────────────────────────────────────────────── */
 export async function POST(req: NextRequest) {
+  // ── RATE LIMIT: 30 chat requests per minute per IP ──
+  // Protects against runaway scripts and bots burning Claude credits.
+  maybeSweepRateLimitBuckets();
+  const limited = checkRateLimit(req, { windowMs: 60_000, max: 30, key: "chat" });
+  if (limited) {
+    return NextResponse.json({
+      type: "chat",
+      message: "Slow down a sec — too many requests. Try again in a moment.",
+    }, { status: 429, headers: { "Retry-After": String(limited.retryAfterSec) } });
+  }
+
   if (!hasAnthropicKey()) {
     console.error("[/api/chat] ANTHROPIC_API_KEY missing (env + .env.local both empty)");
     return NextResponse.json(fallback("no api key"), { status: 200 });
@@ -620,14 +632,33 @@ export async function POST(req: NextRequest) {
       action_params?: Record<string, unknown>;
     } = body;
 
-    // ── DIAGNOSTIC LOG #2: /api/chat route handler entry ──
-    console.log("[DIAG /api/chat] received", {
-      receivedImageContext: session.imageContext ?? null,
-      receivedAnchor:       session.anchor ?? null,
-      mode:                 session.mode ?? null,
-      userMessage:          message,
-      hasAction:            !!action,
-    });
+    // ── INPUT VALIDATION — prevent abuse / cost bombs ──
+    const MAX_MESSAGE_CHARS = 2000;
+    const MAX_HISTORY_ITEMS = 20;
+    if (typeof message !== "string") {
+      return NextResponse.json({ error: "message must be a string" }, { status: 400 });
+    }
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return NextResponse.json({
+        type: "chat",
+        message: "Your message is too long — try keeping it under 2000 characters.",
+      }, { status: 200 });
+    }
+    if (!Array.isArray(history) || history.length > MAX_HISTORY_ITEMS) {
+      return NextResponse.json({ error: "history malformed or too long" }, { status: 400 });
+    }
+
+    // Shape-only diagnostic log — never log the user's text or the
+    // full image context (PII / privacy).
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[/api/chat] received", {
+        hasImageContext: !!session.imageContext,
+        hasAnchor:       !!session.anchor,
+        mode:            session.mode ?? null,
+        msgLen:          typeof message === "string" ? message.length : 0,
+        hasAction:       !!action,
+      });
+    }
 
     // ─── FAST PATH: client confirms a slot swap by tapping an option card
     //     → skip Claude entirely; just swap that ONE slot in the existing outfit.
@@ -763,11 +794,6 @@ export async function POST(req: NextRequest) {
       systemBlocks.push({ type: "text", text: sessionContext });
     }
 
-    // ── DIAGNOSTIC LOG #3: full system prompt right before SDK call ──
-    console.log("[DIAG /api/chat] system prompt to Claude:\n",
-      systemBlocks.map((b, i) => `--- BLOCK ${i} (cache_control=${(b as Anthropic.TextBlockParam).cache_control ? "ephemeral" : "none"}) ---\n${b.text}`).join("\n\n")
-    );
-
     // Helper: single call to Claude (used twice for empty-response retry)
     const askClaude = async () => {
       const r = await client.messages.create({
@@ -845,12 +871,13 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[/api/chat] error:", msg);
-    // Friendlier user-facing message for transient API/network failures
+    // Friendlier user-facing message for transient API/network failures.
+    // We DON'T expose internal error details to the client — they're
+    // logged server-side only.
     return NextResponse.json({
       type: "chat",
       message: "Connection hiccup — give that another try in a sec.",
       quick_replies: ["☀️ Casual day", "💃 Party night", "💼 Office", "👗 Show me dresses"],
-      _debugError: msg,
     }, { status: 200 });
   }
 }

@@ -6,6 +6,7 @@ import {
 } from "@/lib/outfitEngine";
 import { explainOutfit } from "@/lib/styleExplainer";
 import { GeneratedOutfit, OutfitContext, EnrichedProduct, ProductType } from "@/types/fashion";
+import { checkRateLimit, maybeSweepRateLimitBuckets } from "@/utils/rateLimit";
 
 /* ────────────────────────────────────────────────────────────────
    Types
@@ -279,6 +280,17 @@ Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
    POST /api/image-style
    ──────────────────────────────────────────────────────────────── */
 export async function POST(req: NextRequest) {
+  // ── RATE LIMIT: 10 vision requests per minute per IP ──
+  // Vision calls are more expensive than text-only chat, so a stricter limit.
+  maybeSweepRateLimitBuckets();
+  const limited = checkRateLimit(req, { windowMs: 60_000, max: 10, key: "image-style" });
+  if (limited) {
+    return NextResponse.json({
+      type: "chat",
+      message: "Whoa — that's a lot of image uploads. Wait a moment and try again.",
+    }, { status: 429, headers: { "Retry-After": String(limited.retryAfterSec) } });
+  }
+
   if (!hasAnthropicKey()) {
     console.error("[/api/image-style] ANTHROPIC_API_KEY missing");
     return NextResponse.json({
@@ -297,18 +309,32 @@ export async function POST(req: NextRequest) {
       userMessage?: string;   // e.g. "style this for date night" or "make it under ₹4000"
     };
 
-    // ── DIAGNOSTIC LOG: /api/image-style route handler entry ──
-    console.log("[DIAG /api/image-style] received", {
-      receivedUserMessage: userMessage ?? null,
-      receivedImage:       !!imageBase64,
-      imageMime,
-      imageBytesLen:       imageBase64?.length ?? 0,
-      genderOverride:      genderOverride ?? null,
-      sessionGender:       session?.userProfile?.gender ?? null,
-    });
+    // Shape-only diagnostic log — never log the actual text the user typed.
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[/api/image-style] received", {
+        hasImage:         !!imageBase64,
+        imageMime,
+        imageBase64Len:   imageBase64?.length ?? 0,
+        hasUserMessage:   !!userMessage,
+        userMessageLen:   userMessage?.length ?? 0,
+        hasGenderOverride: !!genderOverride,
+      });
+    }
 
     if (!imageBase64 || !imageMime) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
+    }
+
+    // ── INPUT VALIDATION — prevent abuse / cost bombs ──
+    // 13.5 MB of base64 ≈ 10 MB binary. Same limit as the frontend's
+    // file picker, enforced again here in case someone bypasses the UI.
+    const MAX_BASE64_BYTES = 13.5 * 1024 * 1024;
+    const MAX_USER_MESSAGE_CHARS = 2000;
+    if (typeof imageBase64 !== "string" || imageBase64.length > MAX_BASE64_BYTES) {
+      return NextResponse.json({ error: "Image too large (max 10MB)" }, { status: 413 });
+    }
+    if (userMessage && (typeof userMessage !== "string" || userMessage.length > MAX_USER_MESSAGE_CHARS)) {
+      return NextResponse.json({ error: "userMessage too long" }, { status: 400 });
     }
 
     /* Validate mime */

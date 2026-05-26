@@ -2043,26 +2043,12 @@ export default function LookbookChat() {
     if (!query && !opts?.action) return;
     if (loading) return;
 
-    // ── DIAGNOSTIC LOG #1: frontend submit handler ──
-    // eslint-disable-next-line no-console
-    console.log("[DIAG send()]", {
-      hasStagedImage:    !!imageFile,
-      hasImageContext:   !!session.imageContext,
-      mode:              session.mode ?? null,
-      textBeingSent:     query,
-      hasAnchor:         !!session.anchor,
-      action:            opts?.action ?? null,
-    });
-
     // ── ROUTING GUARD ────────────────────────────────────────────
     // If the user has a STAGED image AND we haven't yet activated
     // image_styling mode (no imageContext), the text is about that
     // staged image — route to /api/image-style instead of /api/chat
     // so Sonnet actually SEES the picture.
-    // sendImage() already reads `input.trim()` and sends it as the
-    // userMessage field, so we just delegate to it.
     if (imageFile && !session.imageContext && !opts?.action) {
-      console.log("[DIAG send()] → routing to /api/image-style because image is staged and no imageContext yet");
       // sendImage() handles its own loading state, user-bubble, and input clearing
       return sendImage();
     }
