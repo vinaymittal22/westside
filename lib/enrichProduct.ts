@@ -40,6 +40,12 @@ function inferProductType(p: FashionProduct): ProductType {
   if (cat === "dresses" || /\bdress\b/.test(name)) return "DRESS";
   if (cat === "footwear" || /\b(sneaker|sandal|loafer|trainer|shoe|heel|boot)/.test(name)) return "FOOTWEAR";
 
+  // Explicit "Bags" category (used in curated catalogue) — classify before accessories fallback
+  if (cat === "bags" || /\bbag\b|\btote\b|\bbackpack\b|\bpouch\b|\bclutch\b/.test(name)) return "BAG";
+
+  // "Jeans" and "Pants" categories (used in curated catalogue) — same as Bottoms/Denims
+  if (cat === "jeans" || cat === "pants") return "BOTTOM";
+
   if (cat === "accessories") {
     // socks have no slot in any outfit template → flag as BAG (gets filtered downstream)
     if (SOCKS_KEYWORDS.some(k => name.includes(k))) return "BAG";
