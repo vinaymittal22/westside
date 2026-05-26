@@ -82,7 +82,7 @@ const SECTION_META: Record<string, { label: string; color: string }> = {
   footwear:   { label: "FOOTWEAR",   color: INK },
   bag:        { label: "BAG",        color: INK },
   sunglasses: { label: "SUNGLASSES", color: INK },
-  necklace:   { label: "NECKLACE",   color: INK },
+  necklace:   { label: "JEWELLERY",  color: INK },
   hat:        { label: "HAT",        color: INK },
   watch:      { label: "WATCH",      color: INK },
 };
