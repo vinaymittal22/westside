@@ -22,3 +22,15 @@ yarn-debug.log*
 
 # Claude Code local settings (may contain machine-specific tool perms)
 .claude/settings.local.json
+
+# Generated pitch / presentation artifacts (kept on disk, not in repo)
+*.pptx
+*.docx
+*.pdf
+~$*
+# Generator scripts (one-off helpers, not part of the app)
+generate_pitch_deck.py
+generate_presentation_doc.py
+generate_summary_pdf.py
+generate_architecture_diagram.py
+burnt_toast_architecture.png

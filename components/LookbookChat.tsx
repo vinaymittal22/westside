@@ -259,6 +259,10 @@ interface OutfitData {
   budget_note: string;
   next_question?: string;
   style_notes?: StyleNotes;
+  /** Optional server-supplied follow-up chips. When present, overrides
+   *  the default FOLLOWUP_CHIPS. Used by the purchase-intent fast path
+   *  to surface cart-state-aware suggestions. */
+  quick_replies?: string[];
 }
 
 interface LookEntry {
@@ -277,6 +281,8 @@ interface MultiData {
   message: string;
   looks: LookEntry[];
   next_question?: string;
+  /** Optional server-supplied follow-up chips. See OutfitData.quick_replies. */
+  quick_replies?: string[];
 }
 
 interface ProductsApiItem {
@@ -1000,10 +1006,14 @@ const FOLLOWUP_CHIPS = [
   "More streetwear",
 ];
 
-function FollowUpChips({ onQuickReply }: { onQuickReply: (t: string) => void }) {
+function FollowUpChips({ onQuickReply, chips }: { onQuickReply: (t: string) => void; chips?: string[] }) {
+  // Use server-supplied chips when provided (e.g. cart-state-aware suggestions
+  // from the purchase-intent fast path); otherwise fall back to the default
+  // styling-only chips shared across all outfit responses.
+  const items = chips && chips.length > 0 ? chips : FOLLOWUP_CHIPS;
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-      {FOLLOWUP_CHIPS.map((chip, i) => (
+      {items.map((chip, i) => (
         <button
           key={i}
           onClick={() => onQuickReply(chip)}
@@ -1182,7 +1192,7 @@ function OutfitRenderer({ data, onQuickReply }: { data: OutfitData; onQuickReply
         }}>{data.next_question}</div>
       )}
 
-      <FollowUpChips onQuickReply={onQuickReply} />
+      <FollowUpChips onQuickReply={onQuickReply} chips={data.quick_replies} />
     </div>
   );
 }
@@ -1228,7 +1238,7 @@ function MultiRenderer({ data, onQuickReply }: { data: MultiData; onQuickReply: 
         }}>{data.next_question}</div>
       )}
 
-      <FollowUpChips onQuickReply={onQuickReply} />
+      <FollowUpChips onQuickReply={onQuickReply} chips={data.quick_replies} />
     </div>
   );
 }
