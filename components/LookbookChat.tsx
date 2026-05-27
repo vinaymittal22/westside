@@ -1744,7 +1744,7 @@ export default function LookbookChat() {
   // Persist the most-recent uploaded image so we can re-call /api/image-style
   // when the user picks a gender from the unisex disambiguation prompt.
   const lastUploadedRef = useRef<{ base64: string; mime: string; preview: string } | null>(null);
-  const { totalItems: cartCount } = useCart();
+  const { totalItems: cartCount, items: cartItems } = useCart();
   const { totalItems: wishCount } = useWishlist();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
@@ -2040,6 +2040,9 @@ export default function LookbookChat() {
 
     try {
       const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }));
+      // Pass the SKUs currently in cart so the backend's purchase-intent
+      // fast path knows which items are already added (vs. still need sizing).
+      const cartSkus = Array.from(new Set(cartItems.map(i => i.id)));
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2047,6 +2050,7 @@ export default function LookbookChat() {
           message: query || "(action)",
           history,
           session,
+          cartSkus,
           ...(opts?.action ? { action: opts.action, action_params: opts.actionParams } : {}),
         }),
       });

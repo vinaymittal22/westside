@@ -644,12 +644,14 @@ export async function POST(req: NextRequest) {
       message,
       history = [],
       session = {},
+      cartSkus = [],
       action,
       action_params,
     }: {
       message: string;
       history: AnthropicMessage[];
       session?: SessionState;
+      cartSkus?: string[];
       action?: string;
       action_params?: Record<string, unknown>;
     } = body;
@@ -689,27 +691,36 @@ export async function POST(req: NextRequest) {
     //     currently in session.currentOutfit using REAL catalogue data, with
     //     Select-Size buttons readily available on each card. Quick replies
     //     are styling-only — never cart/checkout/payment actions.
-    const PURCHASE_INTENT_RE = /\b(add(?:\s+(?:this|them|it|these))?\s+(?:to|in|in\s+my|to\s+my)\s+cart|buy(?:\s+(?:this|now|it))?|check\s*out|place\s+(?:the\s+)?order|pay\s+now|i'?ll\s+take\s+(?:it|this|them)|i\s+want\s+this\s+look)\b/i;
+    const PURCHASE_INTENT_RE = /\b(add(?:\s+(?:this|them|it|these))?\s+(?:to|in|in\s+my|to\s+my)\s+cart|buy(?:\s+(?:this|now|it))?|check\s*out|place\s+(?:the\s+)?order|pay\s+now|i'?ll\s+take\s+(?:it|this|them)|i\s+want\s+this\s+look|(?:i\s+(?:have\s+)?)?selected.*(?:add|cart))\b/i;
     const isPurchaseIntent = typeof message === "string" && PURCHASE_INTENT_RE.test(message);
     if (isPurchaseIntent && session.currentOutfit && Object.keys(session.currentOutfit).length > 0) {
       const outfitState = session.currentOutfit;
+      const cartSkuSet = new Set((cartSkus ?? []).map(s => String(s)));
+
+      // Categorise each outfit slot by cart status
       const outfitDisplay: Record<string, unknown> = {};
+      const skusInCart: string[] = [];
+      const skusPending: string[] = [];
       let total = 0;
+
       for (const [role, item] of Object.entries(outfitState)) {
         if (!item?.sku) continue;
         const product = CATALOGUE_BY_ID[item.sku];
         if (!product) continue;
+        const inCart = cartSkuSet.has(product.id);
         outfitDisplay[role] = {
           sku:          product.id,
           name:         product.name,
           price:        product.price,
-          note:         "Pick a size to add to cart",
+          note:         inCart ? "✓ Already in your cart" : "Pick a size to add to cart",
           emoji:        emojiFor(role),
           url:          product.url,
           img:          product.image,
           colors:       product.color ?? [],
           color_family: product.color_family,
         };
+        if (inCart) skusInCart.push(product.id);
+        else        skusPending.push(product.id);
         total += product.price;
       }
 
@@ -721,17 +732,37 @@ export async function POST(req: NextRequest) {
         }, { status: 200 });
       }
 
+      // Pick a message + quick replies based on cart state
+      const totalSlots   = skusInCart.length + skusPending.length;
+      const allInCart    = skusPending.length === 0 && skusInCart.length > 0;
+      const someInCart   = skusInCart.length > 0 && skusPending.length > 0;
+
+      let message_ = "Your look is ready ✨ Tap 'Select Size' on each card to add the pieces to your cart 🛍️";
+      let nextQ    = "Want me to style another look while you pick sizes? ✨";
+      let quickReplies: string[] = ["Style another look ✨", "Different vibe 🎨", "Show me more"];
+
+      if (allInCart) {
+        message_ = `All ${totalSlots} pieces are in your cart ✓ Head to your cart 🛍️ when you're ready to check out — or want me to style another look?`;
+        nextQ    = "Style another look while you shop? ✨";
+        quickReplies = ["Style another look ✨", "Different vibe 🎨", "Start fresh 🧺"];
+      } else if (someInCart) {
+        const pendingCount = skusPending.length;
+        message_ = `${skusInCart.length} ${skusInCart.length === 1 ? "piece is" : "pieces are"} already in your cart ✓ Tap 'Select Size' on the remaining ${pendingCount} to add ${pendingCount === 1 ? "it" : "them"} 🛍️`;
+        nextQ    = "Want me to style another look in the meantime? ✨";
+        quickReplies = ["Style another look ✨", "Different vibe 🎨", "Show me more"];
+      }
+
       return NextResponse.json({
         type: "outfit",
-        message: "Your look is ready ✨ Tap 'Select Size' on each card to add the pieces to your cart 🛍️",
+        message: message_,
         occasion:    session.userProfile?.occasion ?? "",
         vibe:        session.userProfile?.vibe ?? "",
         outfit:      outfitDisplay,
         total,
         budget_note: `Complete-the-look total: ₹${total.toLocaleString("en-IN")}`,
         style_notes: null,
-        next_question: "Want me to style another look while you pick sizes? ✨",
-        quick_replies: ["Style another look ✨", "Different vibe 🎨", "Show me more"],
+        next_question: nextQ,
+        quick_replies: quickReplies,
       }, { status: 200 });
     }
 
