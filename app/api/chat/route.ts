@@ -682,6 +682,59 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // ─── FAST PATH: user expresses purchase intent ("add to cart" / "checkout" /
+    //     "buy this" / "place order" / "pay now" / "I'll take it").
+    //     We intercept BEFORE calling Claude so the LLM cannot hallucinate
+    //     fake prices or fake confirmations. We re-render the EXACT outfit
+    //     currently in session.currentOutfit using REAL catalogue data, with
+    //     Select-Size buttons readily available on each card. Quick replies
+    //     are styling-only — never cart/checkout/payment actions.
+    const PURCHASE_INTENT_RE = /\b(add(?:\s+(?:this|them|it|these))?\s+(?:to|in|in\s+my|to\s+my)\s+cart|buy(?:\s+(?:this|now|it))?|check\s*out|place\s+(?:the\s+)?order|pay\s+now|i'?ll\s+take\s+(?:it|this|them)|i\s+want\s+this\s+look)\b/i;
+    const isPurchaseIntent = typeof message === "string" && PURCHASE_INTENT_RE.test(message);
+    if (isPurchaseIntent && session.currentOutfit && Object.keys(session.currentOutfit).length > 0) {
+      const outfitState = session.currentOutfit;
+      const outfitDisplay: Record<string, unknown> = {};
+      let total = 0;
+      for (const [role, item] of Object.entries(outfitState)) {
+        if (!item?.sku) continue;
+        const product = CATALOGUE_BY_ID[item.sku];
+        if (!product) continue;
+        outfitDisplay[role] = {
+          sku:          product.id,
+          name:         product.name,
+          price:        product.price,
+          note:         "Pick a size to add to cart",
+          emoji:        emojiFor(role),
+          url:          product.url,
+          img:          product.image,
+          colors:       product.color ?? [],
+          color_family: product.color_family,
+        };
+        total += product.price;
+      }
+
+      if (Object.keys(outfitDisplay).length === 0) {
+        return NextResponse.json({
+          type: "chat",
+          message: "Let's build a look first ✨ Tell me the occasion and I'll style it for you.",
+          quick_replies: ["☀️ Casual", "🌙 Date night", "💃 Party", "💼 Office", "👗 Dresses"],
+        }, { status: 200 });
+      }
+
+      return NextResponse.json({
+        type: "outfit",
+        message: "Your look is ready ✨ Tap 'Select Size' on each card to add the pieces to your cart 🛍️",
+        occasion:    session.userProfile?.occasion ?? "",
+        vibe:        session.userProfile?.vibe ?? "",
+        outfit:      outfitDisplay,
+        total,
+        budget_note: `Complete-the-look total: ₹${total.toLocaleString("en-IN")}`,
+        style_notes: null,
+        next_question: "Want me to style another look while you pick sizes? ✨",
+        quick_replies: ["Style another look ✨", "Different vibe 🎨", "Show me more"],
+      }, { status: 200 });
+    }
+
     // ─── FAST PATH: client confirms a slot swap by tapping an option card
     //     → skip Claude entirely; just swap that ONE slot in the existing outfit.
     //     NEVER regenerate the full outfit — keep every other slot exactly as-is.
