@@ -691,6 +691,100 @@ export async function POST(req: NextRequest) {
     //     currently in session.currentOutfit using REAL catalogue data, with
     //     Select-Size buttons readily available on each card. Quick replies
     //     are styling-only — never cart/checkout/payment actions.
+    // ─── FAST PATH: user wants to REMOVE one item from the current look.
+    //     e.g. "remove the bag", "drop the sunglasses", "i don't need shoes",
+    //          "delete necklace", "take off the hat", "no bag".
+    //     We map the mentioned word/category to a slot role, strip it from
+    //     session.currentOutfit, and return the updated outfit with a short
+    //     confirmation. Deterministic — never calls the LLM.
+    const REMOVE_INTENT_RE = /\b(remove|drop|delete|take\s+off|take\s+out|get\s+rid\s+of|don'?t\s+(?:need|want)|no\s+more|don'?t\s+like|skip)\b/i;
+    // Empty-session removal request → never call the LLM (it will happily
+    // pretend it dropped something). Friendly deterministic reply instead.
+    if (typeof message === "string" && REMOVE_INTENT_RE.test(message)
+        && (!session.currentOutfit || Object.keys(session.currentOutfit).length === 0)) {
+      return NextResponse.json({
+        type: "chat",
+        message: "There's nothing to remove yet ✨ Let me style a look first — what's the occasion?",
+        quick_replies: ["☀️ Casual", "🌙 Date night", "💃 Party", "💼 Office", "👗 Dresses"],
+      }, { status: 200 });
+    }
+    if (typeof message === "string" && REMOVE_INTENT_RE.test(message)
+        && session.currentOutfit && Object.keys(session.currentOutfit).length > 0) {
+      // Word → slot role lookup. Order matters slightly (longer phrases first).
+      const SLOT_KEYWORD_MAP: Array<[RegExp, string]> = [
+        [/\b(sunglass(?:es)?|shades|eyewear)\b/i,                                              "sunglasses"],
+        [/\b(jewell?ery|necklace|bracelet|earring(?:s)?|charm(?:s)?|ring(?:s)?)\b/i,           "necklace"],
+        [/\b(footwear|shoes?|sneaker(?:s)?|sandal(?:s)?|heel(?:s)?|boot(?:s)?|loafer(?:s)?)\b/i, "footwear"],
+        [/\b(handbag|bag(?:s)?|tote|clutch|purse)\b/i,                                          "bag"],
+        [/\b(dress(?:es)?)\b/i,                                                                  "dress"],
+        [/\b(top(?:s)?|tee(?:s)?|t-?shirt(?:s)?|blouse|shirt(?:s)?)\b/i,                         "top"],
+        [/\b(bottom(?:s)?|pants?|trousers?|jeans?|skirt(?:s)?|shorts?)\b/i,                     "bottom"],
+        [/\b(hat(?:s)?|cap(?:s)?|beanie)\b/i,                                                    "hat"],
+        [/\b(watch(?:es)?)\b/i,                                                                  "watch"],
+      ];
+
+      let targetRole: string | null = null;
+      for (const [re, role] of SLOT_KEYWORD_MAP) {
+        if (re.test(message) && session.currentOutfit[role]) {
+          targetRole = role;
+          break;
+        }
+      }
+
+      if (targetRole) {
+        // Build the new outfit MINUS the removed slot
+        const updatedOutfit: Record<string, unknown> = {};
+        let total = 0;
+        for (const [role, item] of Object.entries(session.currentOutfit)) {
+          if (role === targetRole || !item?.sku) continue;
+          const product = CATALOGUE_BY_ID[item.sku];
+          if (!product) continue;
+          updatedOutfit[role] = {
+            sku:          product.id,
+            name:         product.name,
+            price:        product.price,
+            note:         "",
+            emoji:        emojiFor(role),
+            url:          product.url,
+            img:          product.image,
+            colors:       product.color ?? [],
+            color_family: product.color_family,
+          };
+          total += product.price;
+        }
+
+        const removedName = session.currentOutfit[targetRole]?.name ?? targetRole;
+        const totalStr = total.toLocaleString("en-IN");
+
+        // If all slots removed → return chat type with the clear-look message
+        if (Object.keys(updatedOutfit).length === 0) {
+          return NextResponse.json({
+            type: "chat",
+            message: `Look cleared! Want me to style something new? ✨`,
+            quick_replies: ["☀️ Casual", "🌙 Date night", "💃 Party", "💼 Office", "👗 Dresses"],
+          }, { status: 200 });
+        }
+
+        return NextResponse.json({
+          type: "outfit",
+          message: `Dropped the ${targetRole === "necklace" ? "jewellery" : targetRole}! Your look is now ₹${totalStr} ✨`,
+          occasion:    session.userProfile?.occasion ?? "",
+          vibe:        session.userProfile?.vibe ?? "",
+          outfit:      updatedOutfit,
+          total,
+          budget_note: `Updated total: ₹${totalStr}`,
+          style_notes: null,
+          next_question: `Want me to swap in something else, or shop what's left?`,
+          quick_replies: [`Add ${targetRole === "necklace" ? "jewellery" : targetRole} back ✨`, "Different vibe 🎨", "Show me more"],
+          // Suppress the user-side bubble — Toastie's confirmation already explains what happened.
+          // (Frontend ignores this field if unknown — safe additive change.)
+          _removed_slot: targetRole,
+          _removed_name: removedName,
+        }, { status: 200 });
+      }
+      // No matched slot → fall through to LLM
+    }
+
     const PURCHASE_INTENT_RE = /\b(add(?:\s+(?:this|them|it|these))?\s+(?:to|in|in\s+my|to\s+my)\s+cart|buy(?:\s+(?:this|now|it))?|check\s*out|place\s+(?:the\s+)?order|pay\s+now|i'?ll\s+take\s+(?:it|this|them)|i\s+want\s+this\s+look|(?:i\s+(?:have\s+)?)?selected.*(?:add|cart))\b/i;
     const isPurchaseIntent = typeof message === "string" && PURCHASE_INTENT_RE.test(message);
     // Purchase intent but NO outfit in session → deterministic friendly reply.

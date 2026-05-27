@@ -406,12 +406,19 @@ function buildProduct(item: OutfitItem, section: string): Product {
 }
 
 /* ── Compact card — renders ALL outfit sections in one unified grid ── */
-function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
+function CompactCard({ section, item, onRemove }: {
+  section: string;
+  item: OutfitItem;
+  /** When provided, the card shows a ✕ button. Clicking calls this. */
+  onRemove?: (section: string) => void;
+}) {
   const meta = SECTION_META[section] ?? { label: section.toUpperCase(), color: ACCENT };
   const [imgError,    setImgError]    = useState(false);
   const [cartAdded,   setCartAdded]   = useState(false);
   const [showSizes,   setShowSizes]   = useState(false);
   const [pickedSize,  setPickedSize]  = useState<string | null>(null);
+  const [removing,    setRemoving]    = useState(false);
+  const [removeHover, setRemoveHover] = useState(false);
   const { addItem: addToCart, isInCart } = useCart();
   const { toggleItem, isWishlisted } = useWishlist();
   // Subscribe to broken-SKU updates so a card disappears if its image
@@ -453,6 +460,15 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
     toggleItem(product);
   }
 
+  /** Remove this slot from the parent's outfit. Quick fade-out, no confirm dialog. */
+  function handleRemoveClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!onRemove || removing) return;
+    setRemoving(true);
+    // 220ms fade-out matches the CSS transition below
+    setTimeout(() => onRemove(section), 220);
+  }
+
   /* primary color for the polaroid footer caption */
   const firstColor = item.colors?.[0];
 
@@ -466,11 +482,15 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
         display: "flex", flexDirection: "column",
         cursor: "pointer",
         boxShadow: showSizes ? `0 0 0 2px rgba(26,26,26,0.10)` : "0 1px 3px rgba(0,0,0,0.04)",
-        transition: "transform 0.15s, box-shadow 0.15s, border-color 0.15s",
+        // Animate opacity + scale when the X button is pressed
+        opacity:  removing ? 0 : 1,
+        transform: removing ? "scale(0.94)" : undefined,
+        pointerEvents: removing ? "none" : undefined,
+        transition: "opacity 220ms ease, transform 220ms ease, box-shadow 0.15s, border-color 0.15s",
       }}
       onClick={() => !showSizes && item.url && window.open(item.url, "_blank", "noopener,noreferrer")}
-      onMouseEnter={e => { if (!showSizes) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 6px 18px rgba(0,0,0,0.08)"; e.currentTarget.style.borderColor = TEXT; }}}
-      onMouseLeave={e => { if (!showSizes) { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = BORDER; }}}
+      onMouseEnter={e => { if (!showSizes && !removing) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 6px 18px rgba(0,0,0,0.08)"; e.currentTarget.style.borderColor = TEXT; }}}
+      onMouseLeave={e => { if (!showSizes && !removing) { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = BORDER; }}}
     >
       {/* (#4) Category caption above the image — magazine-style rule line */}
       <div style={{
@@ -527,6 +547,31 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
           <span>VIEW DETAILS</span>
           <span style={{ fontSize: 13 }}>→</span>
         </div>
+
+        {/* Remove (✕) button — only shown when the parent passes onRemove.
+            Positioned LEFT of the heart button so the visual order is [✕] [♡] */}
+        {onRemove && (
+          <button
+            onClick={handleRemoveClick}
+            onMouseEnter={() => setRemoveHover(true)}
+            onMouseLeave={() => setRemoveHover(false)}
+            aria-label="Remove from look"
+            title="Remove from look"
+            style={{
+              position: "absolute", top: 5, right: 33,
+              width: 24, height: 24, borderRadius: "50%",
+              background: removeHover ? "#ef4444" : "rgba(255,255,255,0.90)",
+              color: removeHover ? "#fff" : TEXT,
+              border: "none", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+              transition: "background 0.15s, color 0.15s, transform 0.15s",
+              transform: removeHover ? "scale(1.06)" : "scale(1)",
+            }}
+          >
+            <X size={12} strokeWidth={2.5} />
+          </button>
+        )}
 
         {/* Wishlist button */}
         <button
@@ -706,7 +751,7 @@ function StyleNotesPanel({ notes }: { notes: StyleNotes }) {
 
 /* ── Single outfit block (reused in both outfit + multi) ─────────── */
 function OutfitBlock({
-  outfit, occasion, vibe, total, budget_note, label, style_notes, lookNumber,
+  outfit, occasion, vibe, total, budget_note, label, style_notes, lookNumber, onRemoveSlot,
 }: {
   outfit: OutfitPair;
   occasion: string;
@@ -716,6 +761,8 @@ function OutfitBlock({
   label?: string;
   style_notes?: StyleNotes;
   lookNumber?: number;
+  /** When provided, each card shows a ✕ button that calls this with the slot role. */
+  onRemoveSlot?: (role: string) => void;
 }) {
   // mute unused-var TS for style_notes (kept in API contract, hidden from UI)
   void style_notes;
@@ -830,7 +877,14 @@ function OutfitBlock({
               minWidth: allKeys.length * 128,
               alignItems: "start",
             }}>
-              {allKeys.map(k => <CompactCard key={k} section={k} item={outfit[k]!} />)}
+              {allKeys.map(k => (
+                <CompactCard
+                  key={k}
+                  section={k}
+                  item={outfit[k]!}
+                  onRemove={onRemoveSlot ? () => onRemoveSlot(k) : undefined}
+                />
+              ))}
             </div>
           </div>
         ) : (
@@ -1071,7 +1125,11 @@ function AnalysisBadges({ analysis }: { analysis: ImageAnalysisInfo }) {
 }
 
 /* ── Image Looks renderer — shows AI analysis + multiple styled looks ── */
-function ImageLooksRenderer({ data, onQuickReply }: { data: ImageLooksData; onQuickReply: (t: string) => void }) {
+function ImageLooksRenderer({ data, onQuickReply, onRemoveSlot }: {
+  data: ImageLooksData;
+  onQuickReply: (t: string) => void;
+  onRemoveSlot?: (lookIndex: number, role: string) => void;
+}) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {/* Stylist message */}
@@ -1144,6 +1202,7 @@ function ImageLooksRenderer({ data, onQuickReply }: { data: ImageLooksData; onQu
               label={look.label}
               style_notes={look.style_notes}
               lookNumber={look.look_number}
+              onRemoveSlot={onRemoveSlot ? (role) => onRemoveSlot(i, role) : undefined}
             />
           ))}
         </>
@@ -1162,7 +1221,12 @@ function ImageLooksRenderer({ data, onQuickReply }: { data: ImageLooksData; onQu
   );
 }
 
-function OutfitRenderer({ data, onQuickReply }: { data: OutfitData; onQuickReply: (t: string) => void }) {
+function OutfitRenderer({ data, onQuickReply, onRemoveSlot }: {
+  data: OutfitData;
+  onQuickReply: (t: string) => void;
+  /** Called when the user clicks ✕ on a card. Receives the slot role. */
+  onRemoveSlot?: (role: string) => void;
+}) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{
@@ -1188,6 +1252,7 @@ function OutfitRenderer({ data, onQuickReply }: { data: OutfitData; onQuickReply
         budget_note={data.budget_note}
         style_notes={data.style_notes}
         lookNumber={1}
+        onRemoveSlot={onRemoveSlot}
       />
 
       {data.next_question && (
@@ -1202,7 +1267,12 @@ function OutfitRenderer({ data, onQuickReply }: { data: OutfitData; onQuickReply
   );
 }
 
-function MultiRenderer({ data, onQuickReply }: { data: MultiData; onQuickReply: (t: string) => void }) {
+function MultiRenderer({ data, onQuickReply, onRemoveSlot }: {
+  data: MultiData;
+  onQuickReply: (t: string) => void;
+  /** Called when the user clicks ✕ on a card. Receives the look index + slot role. */
+  onRemoveSlot?: (lookIndex: number, role: string) => void;
+}) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{
@@ -1232,6 +1302,7 @@ function MultiRenderer({ data, onQuickReply }: { data: MultiData; onQuickReply: 
             label={look.label}
             style_notes={look.style_notes}
             lookNumber={look.look_number ?? i + 1}
+            onRemoveSlot={onRemoveSlot ? (role) => onRemoveSlot(i, role) : undefined}
           />
         ))}
       </div>
@@ -1594,17 +1665,25 @@ function ReplaceOptionCard({
 }
 
 /* ── Smart dispatcher ────────────────────────────────────────────── */
-function ResponseRenderer({ data, onQuickReply, onSelectReplacement }: {
+function ResponseRenderer({
+  data, onQuickReply, onSelectReplacement, onRemoveSlot,
+}: {
   data: ParsedResponse;
   onQuickReply: (t: string) => void;
   onSelectReplacement: (slot: string, sku: string, name: string) => void;
+  /**
+   * Called when the user clicks ✕ on a card in this message.
+   * For single-look responses (OutfitRenderer) lookIndex is null.
+   * For multi-look responses (Multi / ImageLooks) lookIndex identifies the look.
+   */
+  onRemoveSlot?: (lookIndex: number | null, role: string) => void;
 }) {
   if (data.type === "chat") return <ChatBubble data={data} onQuickReply={onQuickReply} />;
-  if (data.type === "image_looks") return <ImageLooksRenderer data={data} onQuickReply={onQuickReply} />;
-  if (data.type === "multi") return <MultiRenderer data={data} onQuickReply={onQuickReply} />;
+  if (data.type === "image_looks") return <ImageLooksRenderer data={data} onQuickReply={onQuickReply} onRemoveSlot={onRemoveSlot ? (i, r) => onRemoveSlot(i, r) : undefined} />;
+  if (data.type === "multi") return <MultiRenderer data={data} onQuickReply={onQuickReply} onRemoveSlot={onRemoveSlot ? (i, r) => onRemoveSlot(i, r) : undefined} />;
   if (data.type === "products") return <ProductsRenderer data={data as ProductsData} onQuickReply={onQuickReply} />;
   if (data.type === "replace_options") return <ReplaceOptionsRenderer data={data} onQuickReply={onQuickReply} onSelectReplacement={onSelectReplacement} />;
-  return <OutfitRenderer data={data as OutfitData} onQuickReply={onQuickReply} />;
+  return <OutfitRenderer data={data as OutfitData} onQuickReply={onQuickReply} onRemoveSlot={onRemoveSlot ? (r) => onRemoveSlot(null, r) : undefined} />;
 }
 
 /* ── Parse helper ────────────────────────────────────────────────── */
@@ -2027,6 +2106,77 @@ export default function LookbookChat() {
       action: "confirm_replacement",
       actionParams: { replace_slot: slot, selected_sku: sku },
       userBubble: `Going with "${name}" ✓`,
+    });
+  };
+
+  /**
+   * User clicked the ✕ button on a card. Removes that slot from the
+   * specific message's outfit (mutates messages[messageIdx].parsed.outfit
+   * or messages[messageIdx].parsed.looks[lookIdx].outfit). Also keeps
+   * session.currentOutfit in sync if this is the most recent outfit
+   * — so the engine and "shop the look" total stay consistent.
+   *
+   * Silent UI removal — no chat bubble, no engine call, no confirmation.
+   */
+  const handleRemoveSlot = (messageIdx: number, lookIdx: number | null, role: string) => {
+    setMessages(prev => {
+      if (messageIdx < 0 || messageIdx >= prev.length) return prev;
+      const msg = prev[messageIdx];
+      if (!msg?.parsed) return prev;
+
+      // Build a stripped parsed payload
+      let newParsed: ParsedResponse | null = null;
+
+      // Helper — strip a slot key from an outfit object and recompute total
+      const strip = (outfit: OutfitPair, total: number): { outfit: OutfitPair; total: number } => {
+        const removed = (outfit as unknown as Record<string, { price?: number } | undefined>)[role];
+        if (!removed) return { outfit, total }; // nothing to remove
+        const next = { ...(outfit as unknown as Record<string, unknown>) };
+        delete next[role];
+        const newTotal = Math.max(0, total - (removed.price ?? 0));
+        return { outfit: next as unknown as OutfitPair, total: newTotal };
+      };
+
+      if (msg.parsed.type === "outfit" && lookIdx === null) {
+        const next = { ...(msg.parsed as OutfitData) };
+        const stripped = strip(next.outfit, next.total ?? 0);
+        next.outfit = stripped.outfit;
+        next.total  = stripped.total;
+        newParsed = next as ParsedResponse;
+      } else if (msg.parsed.type === "multi" && lookIdx !== null) {
+        const multi = msg.parsed as MultiData;
+        const looks = multi.looks.map((look, i) => {
+          if (i !== lookIdx) return look;
+          const stripped = strip(look.outfit, look.total ?? 0);
+          return { ...look, outfit: stripped.outfit, total: stripped.total };
+        });
+        newParsed = { ...multi, looks } as ParsedResponse;
+      } else if (msg.parsed.type === "image_looks" && lookIdx !== null) {
+        const il = msg.parsed as ImageLooksData;
+        const looks = (il.looks ?? []).map((look, i) => {
+          if (i !== lookIdx) return look;
+          const stripped = strip(look.outfit, look.total ?? 0);
+          return { ...look, outfit: stripped.outfit, total: stripped.total };
+        });
+        newParsed = { ...il, looks } as ParsedResponse;
+      } else {
+        return prev; // Unknown shape — leave it alone
+      }
+
+      const nextMessages = [...prev];
+      nextMessages[messageIdx] = { ...msg, parsed: newParsed };
+      return nextMessages;
+    });
+
+    // Keep session.currentOutfit aligned when removing from the most recent
+    // outfit (single-look responses or first multi-look). The chat-route
+    // purchase-intent / replace fast paths read from session.currentOutfit,
+    // so it must reflect what's actually on screen.
+    setSession(prev => {
+      if (!prev.currentOutfit || !prev.currentOutfit[role]) return prev;
+      const next = { ...prev.currentOutfit };
+      delete next[role];
+      return { ...prev, currentOutfit: next };
     });
   };
 
@@ -2521,7 +2671,12 @@ export default function LookbookChat() {
                   )}
                   {msg.role === "assistant" ? (
                     msg.parsed
-                      ? <ResponseRenderer data={msg.parsed} onQuickReply={handleQuickReply} onSelectReplacement={handleSelectReplacement} />
+                      ? <ResponseRenderer
+                          data={msg.parsed}
+                          onQuickReply={handleQuickReply}
+                          onSelectReplacement={handleSelectReplacement}
+                          onRemoveSlot={(lookIdx, role) => handleRemoveSlot(i, lookIdx, role)}
+                        />
                       : (
                         <div style={{
                           background: CARD, border: `1px solid ${BORDER}`,
