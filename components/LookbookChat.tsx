@@ -1077,31 +1077,6 @@ function ImageLooksRenderer({ data, onQuickReply }: { data: ImageLooksData; onQu
         {data.message}
       </div>
 
-      {/* Analysis badges */}
-      {data.analysis && <AnalysisBadges analysis={data.analysis} />}
-
-      {/* Detected product description */}
-      {data.analysis?.description && (
-        <div style={{
-          color: MUTED, fontSize: 12, fontStyle: "italic",
-          padding: "6px 14px", borderLeft: `3px solid ${BORDER}`, lineHeight: 1.6,
-        }}>
-          Detected: {data.analysis.description}
-        </div>
-      )}
-
-      {/* Anchor info badge */}
-      {data.anchor_info && (
-        <div style={{
-          display: "inline-flex", alignItems: "center", gap: 6,
-          background: "#fef3c7", border: "1px solid #f59e0b",
-          borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 600,
-          color: "#92400e", alignSelf: "flex-start",
-        }}>
-          🔗 Anchor: {data.anchor_info.type.toLowerCase()} — completing outfit around your piece
-        </div>
-      )}
-
       {/* Gender selection needed */}
       {data.needs_gender && data.quick_replies && (
         <div style={{

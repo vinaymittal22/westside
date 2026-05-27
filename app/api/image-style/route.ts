@@ -272,7 +272,7 @@ Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
   "aesthetic": "one of: y2k-revival, urban-streetwear, smart-casual, minimal-clean, boho-coastal, preppy-collegiate, athleisure, feminine-romantic",
   "occasion_suggestions": ["3-4 occasions this pairs well with, e.g. casual-hangout, date-night, college-fest, party, brunch, office, travel"],
   "description": "One sentence describing the exact product — be specific about what you see",
-  "stylist_message": "2-3 sentences as a personal stylist reacting to this product as the user's ANCHOR piece. If the customer asked a specific question, ANSWER IT directly. Otherwise mention what vibe it gives and that you'll build complete looks around it.",
+  "stylist_message": "ONE short casual line, max 15 words — like a warm shopkeeper spotting the piece. Mention the product type + one vibe/color word. Examples: 'Love this white cottagecore dress! Styling it now ✨' or 'Cute flowy dress — here's what I'd pair with it 💛' or 'This romantic white number? I've got the perfect pieces 🤍'. No technical breakdown. No multiple sentences.",
   "user_intent_slot": "null OR one of: footwear, bag, necklace, sunglasses, hat, watch, full_outfit — derived from the customer's text question. Use null if no specific slot was asked about."
 }`;
 
