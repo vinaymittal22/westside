@@ -7,6 +7,7 @@ import { ShoppingBag, Heart, Star, Tag } from "lucide-react";
 import { FashionProduct } from "@/types";
 import { useCart } from "@/context/CartContext";
 import { useWishlist } from "@/context/WishlistContext";
+import { needsSizeSelection, resolveDefaultSize } from "@/utils/productSizing";
 import clsx from "clsx";
 
 const OCCASION_STYLE: Record<string, string> = {
@@ -28,7 +29,8 @@ export default function FashionProductCard({ product }: Props) {
   const [added, setAdded] = useState(false);
   const wished = isWishlisted(product.id);
   const sizeList = product.sizes ?? [];
-  const [selSize, setSelSize] = useState(sizeList[0] ?? "M");
+  const showSizes = needsSizeSelection(product.category, sizeList);
+  const [selSize, setSelSize] = useState(showSizes ? (sizeList[0] ?? "M") : resolveDefaultSize(sizeList));
 
   const inCart   = isInCart(product.id);
   const discount = product.originalPrice
@@ -39,7 +41,9 @@ export default function FashionProductCard({ product }: Props) {
   const extraSizes = sizeList.length - 4;
 
   function handleCart() {
-    addItem(product, selSize);
+    // Sized categories use the user-picked size; non-sized (bags, jewellery,
+    // sunglasses, etc.) add directly with the One-Size placeholder.
+    addItem(product, showSizes ? selSize : resolveDefaultSize(sizeList));
     setAdded(true);
     setTimeout(() => setAdded(false), 1600);
   }
@@ -126,20 +130,22 @@ export default function FashionProductCard({ product }: Props) {
           <span className="text-[10px] text-gray-400">{product.rating.toFixed(1)}</span>
         </div>
 
-        {/* Size selector */}
-        <div className="flex flex-wrap gap-1">
-          {shownSizes.map((s: string) => (
-            <button key={s} onClick={() => setSelSize(s)}
-              className={clsx("px-2 py-0.5 rounded text-[10px] font-semibold border transition-all duration-150",
-                selSize === s
-                  ? "border-gray-900 bg-gray-900 text-white"
-                  : "border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-800"
-              )}>
-              {s}
-            </button>
-          ))}
-          {extraSizes > 0 && <span className="px-1 py-0.5 text-[10px] text-gray-400">+{extraSizes}</span>}
-        </div>
+        {/* Size selector — only for sized categories (tops, bottoms, dresses, footwear) */}
+        {showSizes && (
+          <div className="flex flex-wrap gap-1">
+            {shownSizes.map((s: string) => (
+              <button key={s} onClick={() => setSelSize(s)}
+                className={clsx("px-2 py-0.5 rounded text-[10px] font-semibold border transition-all duration-150",
+                  selSize === s
+                    ? "border-gray-900 bg-gray-900 text-white"
+                    : "border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-800"
+                )}>
+                {s}
+              </button>
+            ))}
+            {extraSizes > 0 && <span className="px-1 py-0.5 text-[10px] text-gray-400">+{extraSizes}</span>}
+          </div>
+        )}
 
         {/* Price */}
         <div className="flex items-baseline gap-2 mt-auto pt-1">

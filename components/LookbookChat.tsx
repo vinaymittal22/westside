@@ -14,6 +14,7 @@ import { useWishlist } from "@/context/WishlistContext";
 import { products as allProducts } from "@/data/products";
 import { catalogueProducts } from "@/data/catalogue";
 import { Product } from "@/types";
+import { needsSizeSelection, resolveDefaultSize } from "@/utils/productSizing";
 
 /* ──────────────────────────────────────────────────────────────
    BROKEN-IMAGE GUARD
@@ -425,8 +426,9 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
   const inCart    = isInCart(item.sku);
   const wishlisted = isWishlisted(item.sku);
 
-  // Items whose first size is NOT "one size" need user selection
-  const needsSize = product.sizes?.[0] !== "one size";
+  // Only sized categories (tops, bottoms, dresses, footwear) need size selection.
+  // Bags, jewellery, sunglasses, watches, hats, charms add directly with One-Size.
+  const needsSize = needsSizeSelection(product.category, product.sizes);
 
   function addWithSize(size: string) {
     addToCart(product, size);
@@ -442,7 +444,7 @@ function CompactCard({ section, item }: { section: string; item: OutfitItem }) {
     if (needsSize) {
       setShowSizes(prev => !prev);   // toggle size picker
     } else {
-      addWithSize(product.sizes?.[0] ?? "one size");
+      addWithSize(resolveDefaultSize(product.sizes));
     }
   }
 
@@ -734,12 +736,13 @@ function OutfitBlock({
   // Recompute visible total from only the items we'll actually display.
   const visibleTotal = allKeys.reduce((sum, k) => sum + (outfit[k]?.price ?? 0), 0);
 
-  // Items that need size selection (not "one size")
+  // Items that need size selection — only sized categories (tops, bottoms,
+  // dresses, footwear). Bags / jewellery / sunglasses skip the size step.
   const sizableKeys = allKeys.filter(k => {
     const it = outfit[k];
     if (!it) return false;
     const prod = buildProduct(it, k as string);
-    return prod.sizes?.[0] !== "one size";
+    return needsSizeSelection(prod.category, prod.sizes);
   });
 
   const { addItem: addToCart } = useCart();
@@ -755,8 +758,10 @@ function OutfitBlock({
       const it = outfit[k];
       if (!it) return;
       const prod = buildProduct(it, k as string);
-      const needsSize = prod.sizes?.[0] !== "one size";
-      const size = needsSize ? (lookSizes[k] ?? prod.sizes?.[0] ?? "M") : (prod.sizes?.[0] ?? "one size");
+      const needsSize = needsSizeSelection(prod.category, prod.sizes);
+      const size = needsSize
+        ? (lookSizes[k] ?? prod.sizes?.[0] ?? "M")
+        : resolveDefaultSize(prod.sizes);
       addToCart(prod, size);
     });
     setShopAdded(true);
@@ -1252,7 +1257,9 @@ function MiniProductCard({ product }: { product: Product & { colors?: string[]; 
   const [imgError, setImgError] = useState(false);
   useBrokenSkus();
   const sizeList = product.sizes ?? [];
-  const needsSize = sizeList[0] !== "one size" && sizeList.length > 1;
+  // Only sized categories (tops, bottoms, dresses, footwear) get the picker.
+  // Accessories (bags, jewellery, sunglasses, watches, hats) add directly.
+  const needsSize = needsSizeSelection(product.category, sizeList) && sizeList.length > 1;
   const inCart = isInCart(product.id);
   const wished = isWishlisted(product.id);
   const productColors = product.colors;
@@ -1270,7 +1277,7 @@ function MiniProductCard({ product }: { product: Product & { colors?: string[]; 
   function handleCart(e: React.MouseEvent) {
     e.stopPropagation();
     if (added || inCart) return;
-    if (needsSize) { setShowSizes(p => !p); } else { addWithSize(sizeList[0] ?? "one size"); }
+    if (needsSize) { setShowSizes(p => !p); } else { addWithSize(resolveDefaultSize(sizeList)); }
   }
 
   return (

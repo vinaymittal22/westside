@@ -15,6 +15,7 @@ import { products } from "@/data/products";
 import { FashionProduct } from "@/types";
 import { useCart } from "@/context/CartContext";
 import { useWishlist } from "@/context/WishlistContext";
+import { needsSizeSelection, resolveDefaultSize } from "@/utils/productSizing";
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 function Badge({ label, color }: { label: string; color: string }) {
@@ -87,9 +88,14 @@ export default function ProductPage() {
     ? Math.round((1 - product.price / product.originalPrice) * 100)
     : 0;
 
+  // Only sized categories (tops, bottoms, dresses, footwear) require a size pick.
+  // Bags, jewellery, sunglasses, watches, hats add with One-Size directly.
+  const requiresSize = needsSizeSelection(product.category, product.sizes);
+
   const handleAdd = () => {
-    if (!selectedSize) return;
-    addItem(product, selectedSize);
+    if (requiresSize && !selectedSize) return;
+    const size = requiresSize ? selectedSize! : resolveDefaultSize(product.sizes);
+    addItem(product, size);
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
   };
@@ -286,43 +292,45 @@ export default function ProductPage() {
               ))}
             </div>
 
-            {/* Size selector */}
-            <div className="mt-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-semibold text-gray-700">
-                  Select Size
-                  {!selectedSize && <span className="ml-1 text-red-500 font-normal text-xs">(required)</span>}
-                </p>
-                <button className="text-xs text-gray-800 underline underline-offset-2 hover:text-gray-700">Size Guide</button>
+            {/* Size selector — only for sized categories (tops, bottoms, dresses, footwear) */}
+            {requiresSize && (
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-gray-700">
+                    Select Size
+                    {!selectedSize && <span className="ml-1 text-red-500 font-normal text-xs">(required)</span>}
+                  </p>
+                  <button className="text-xs text-gray-800 underline underline-offset-2 hover:text-gray-700">Size Guide</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {product.sizes.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSelectedSize(s)}
+                      className={clsx(
+                        "w-12 h-12 rounded-xl text-sm font-semibold border-2 transition-all duration-150",
+                        selectedSize === s
+                          ? "bg-gray-900 border-gray-900 text-white shadow-md shadow-gray-200"
+                          : "border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-900"
+                      )}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {product.sizes.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setSelectedSize(s)}
-                    className={clsx(
-                      "w-12 h-12 rounded-xl text-sm font-semibold border-2 transition-all duration-150",
-                      selectedSize === s
-                        ? "bg-gray-900 border-gray-900 text-white shadow-md shadow-gray-200"
-                        : "border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-900"
-                    )}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* Action buttons */}
             <div className="mt-6 flex gap-3">
               <button
                 onClick={handleAdd}
-                disabled={!selectedSize || added}
+                disabled={(requiresSize && !selectedSize) || added}
                 className={clsx(
                   "flex-1 py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all duration-300",
                   added
                     ? "bg-emerald-500 text-white"
-                    : !selectedSize
+                    : (requiresSize && !selectedSize)
                     ? "bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200"
                     : "bg-gray-900 text-white hover:bg-black shadow-lg shadow-gray-200 active:scale-95"
                 )}
