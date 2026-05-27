@@ -492,7 +492,10 @@ function CompactCard({ section, item, onRemove }: {
       onMouseEnter={e => { if (!showSizes && !removing) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 6px 18px rgba(0,0,0,0.08)"; e.currentTarget.style.borderColor = TEXT; }}}
       onMouseLeave={e => { if (!showSizes && !removing) { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = BORDER; }}}
     >
-      {/* (#4) Category caption above the image — magazine-style rule line */}
+      {/* (#4) Category caption above the image — magazine-style rule line
+              The ✕ remove button sits flush right of this line when onRemove
+              is provided, so the action visually belongs to the slot label
+              ("remove this TOP") rather than to the image. */}
       <div style={{
         display: "flex", alignItems: "center", gap: 6,
         padding: "8px 10px 4px",
@@ -503,6 +506,30 @@ function CompactCard({ section, item, onRemove }: {
           color: TEXT, whiteSpace: "nowrap",
         }}>— {meta.label}</span>
         <span style={{ flex: 1, height: 1, background: BORDER }} />
+        {onRemove && (
+          <button
+            onClick={handleRemoveClick}
+            onMouseEnter={() => setRemoveHover(true)}
+            onMouseLeave={() => setRemoveHover(false)}
+            aria-label={`Remove ${meta.label} from look`}
+            title="Remove from look"
+            style={{
+              width: 22, height: 22, borderRadius: "50%",
+              background: removeHover ? "#ef4444" : "transparent",
+              color: removeHover ? "#fff" : MUTED,
+              border: `1px solid ${removeHover ? "#ef4444" : BORDER}`,
+              cursor: "pointer",
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+              marginLeft: 2,
+              padding: 0,
+              transition: "background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s",
+              transform: removeHover ? "scale(1.06)" : "scale(1)",
+            }}
+          >
+            <X size={11} strokeWidth={2.5} />
+          </button>
+        )}
       </div>
 
       {/* Square image — uniform 1:1 ratio, soft cream stage so product pops */}
@@ -547,31 +574,6 @@ function CompactCard({ section, item, onRemove }: {
           <span>VIEW DETAILS</span>
           <span style={{ fontSize: 13 }}>→</span>
         </div>
-
-        {/* Remove (✕) button — only shown when the parent passes onRemove.
-            Positioned LEFT of the heart button so the visual order is [✕] [♡] */}
-        {onRemove && (
-          <button
-            onClick={handleRemoveClick}
-            onMouseEnter={() => setRemoveHover(true)}
-            onMouseLeave={() => setRemoveHover(false)}
-            aria-label="Remove from look"
-            title="Remove from look"
-            style={{
-              position: "absolute", top: 5, right: 33,
-              width: 24, height: 24, borderRadius: "50%",
-              background: removeHover ? "#ef4444" : "rgba(255,255,255,0.90)",
-              color: removeHover ? "#fff" : TEXT,
-              border: "none", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-              transition: "background 0.15s, color 0.15s, transform 0.15s",
-              transform: removeHover ? "scale(1.06)" : "scale(1)",
-            }}
-          >
-            <X size={12} strokeWidth={2.5} />
-          </button>
-        )}
 
         {/* Wishlist button */}
         <button

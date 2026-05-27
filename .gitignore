@@ -34,3 +34,6 @@ generate_presentation_doc.py
 generate_summary_pdf.py
 generate_architecture_diagram.py
 burnt_toast_architecture.png
+
+# Ad-hoc demo / preview HTML files (kept on disk for reference)
+x_button_demo.html
