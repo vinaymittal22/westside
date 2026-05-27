@@ -2597,31 +2597,7 @@ export const catalogueCuratedProducts: FashionProduct[] = [
     curated_occasions:  ["casual-hangout", "dailywear", "house-party"],
   },
 
-  {
-    id: "301062255",
-    name: "Tiered Maxi Skirt",
-    brand: "Burnt Toast",
-    price: 990,
-    image: "https://burnt-toast.com/cdn/shop/files/301062255WHITE_2.jpg",
-    images: ["https://burnt-toast.com/cdn/shop/files/301062255WHITE_2.jpg", "https://cdn.shopify.com/s/files/1/0626/4890/9886/files/301062255WHITE_1.jpg?v=1778760203", "https://cdn.shopify.com/s/files/1/0626/4890/9886/files/301062255WHITE_2.jpg?v=1778760202", "https://cdn.shopify.com/s/files/1/0626/4890/9886/files/301062255WHITE_3.jpg?v=1778760204", "https://cdn.shopify.com/s/files/1/0626/4890/9886/files/301062255WHITE_4.jpg?v=1778760204"],
-    category: "Skirts",
-    tags: ["Burnt Toast", "Skirt", "Skirts", "SSNewWomen", "SSshorts-skirts", "SSViewAllWomen", "Summer’26", "Summer’26 Women’s", "Summer’26.26", "White"],
-    rating: 4.4,
-    reviews: 95,
-    isNew: true,
-    isSale: false,
-    sizes: ["XS", "S", "M", "L", "XL"],
-    description: "Tiered maxi skirt featuring an elasticated drawstring waistband and ruffle trim detailing at each tier.",
-    gender: "female",
-    occasion: "casual-hangout",
-    bodyType: ["regular", "athletic"],
-    fit: "regular",
-    color: ["White"],
-    fabric: "Cotton blend",
-    season: ["spring", "summer"],
-    curated_aesthetics: ["smart-casual", "urban-streetwear", "y2k-revival"],
-    curated_occasions:  ["airport-look", "vacation-wear", "daily-campus-life", "college-fest", "house-party", "watching-sports", "casual-hangout", "cafe", "brunch", "mall", "friends-place"],
-  },
+  // Duplicate of SKU 301062255 (Tiered Maxi Skirt) removed — first occurrence kept earlier in file.
 
   /* ══════════════════════════════════════════════════════
      NEW PRODUCTS — BT LOOK 2 (May 2026)  |  65 items

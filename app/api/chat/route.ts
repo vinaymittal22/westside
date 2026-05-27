@@ -693,6 +693,17 @@ export async function POST(req: NextRequest) {
     //     are styling-only — never cart/checkout/payment actions.
     const PURCHASE_INTENT_RE = /\b(add(?:\s+(?:this|them|it|these))?\s+(?:to|in|in\s+my|to\s+my)\s+cart|buy(?:\s+(?:this|now|it))?|check\s*out|place\s+(?:the\s+)?order|pay\s+now|i'?ll\s+take\s+(?:it|this|them)|i\s+want\s+this\s+look|(?:i\s+(?:have\s+)?)?selected.*(?:add|cart))\b/i;
     const isPurchaseIntent = typeof message === "string" && PURCHASE_INTENT_RE.test(message);
+    // Purchase intent but NO outfit in session → deterministic friendly reply.
+    // We never let this case reach the LLM because the LLM (under prompt cache
+    // pressure) sometimes invents "tap select size on each card above" even
+    // when no cards exist. Backend handles it predictably instead.
+    if (isPurchaseIntent && (!session.currentOutfit || Object.keys(session.currentOutfit).length === 0)) {
+      return NextResponse.json({
+        type: "chat",
+        message: "Let's build a look first ✨ Tell me the occasion and I'll style something for you to add to cart.",
+        quick_replies: ["☀️ Casual", "🌙 Date night", "💃 Party", "💼 Office", "👗 Dresses"],
+      }, { status: 200 });
+    }
     if (isPurchaseIntent && session.currentOutfit && Object.keys(session.currentOutfit).length > 0) {
       const outfitState = session.currentOutfit;
       const cartSkuSet = new Set((cartSkus ?? []).map(s => String(s)));
@@ -742,7 +753,8 @@ export async function POST(req: NextRequest) {
       let quickReplies: string[] = ["Style another look ✨", "Different vibe 🎨", "Show me more"];
 
       if (allInCart) {
-        message_ = `All ${totalSlots} pieces are in your cart ✓ Head to your cart 🛍️ when you're ready to check out — or want me to style another look?`;
+        const pieceWord = totalSlots === 1 ? "piece is" : "pieces are";
+        message_ = `All ${totalSlots} ${pieceWord} in your cart ✓ Head to your cart 🛍️ when you're ready to check out — or want me to style another look?`;
         nextQ    = "Style another look while you shop? ✨";
         quickReplies = ["Style another look ✨", "Different vibe 🎨", "Start fresh 🧺"];
       } else if (someInCart) {
