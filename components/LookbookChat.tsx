@@ -9,6 +9,7 @@ import {
   Minus, Building2, Flower2, Cloud, Star, Sun, Moon, Flame,
   Camera, ImageIcon, XCircle,
 } from "lucide-react";
+import VirtualTryOnModal, { TryOnOutfitMap, TryOnEntry } from "./VirtualTryOnModal";
 import { useCart } from "@/context/CartContext";
 import { useWishlist } from "@/context/WishlistContext";
 import { products as allProducts } from "@/data/products";
@@ -751,6 +752,49 @@ function StyleNotesPanel({ notes }: { notes: StyleNotes }) {
   );
 }
 
+/* ─────────────────────────────────────────────────────────────────
+   Virtual Try-On — per-outfit history persistence
+   ─────────────────────────────────────────────────────────────────
+   Stored in localStorage, keyed by outfit fingerprint (sorted SKUs).
+   Best-effort: if quota is exceeded the in-memory state still works.
+   Capped at 4 outfits × 2 versions (oldest outfit dropped first).
+   ───────────────────────────────────────────────────────────────── */
+const TRYON_STORAGE_KEY = "burnt_toast_tryon_history_v1";
+const TRYON_MAX_VERSIONS = 2;
+const TRYON_MAX_OUTFITS  = 4;
+
+function fingerprintOutfit(outfit: TryOnOutfitMap): string {
+  return Object.values(outfit)
+    .map(i => i?.sku)
+    .filter((s): s is string => !!s)
+    .sort()
+    .join("_");
+}
+
+function loadAllTryOnHistory(): Record<string, TryOnEntry[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(TRYON_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, TryOnEntry[]>) : {};
+  } catch { return {}; }
+}
+
+function saveAllTryOnHistory(all: Record<string, TryOnEntry[]>) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(TRYON_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    // Quota or other write error — try shrinking by dropping the oldest outfit.
+    try {
+      const entries = Object.entries(all);
+      if (entries.length > 1) {
+        const shrunk = Object.fromEntries(entries.slice(-Math.max(1, entries.length - 1)));
+        localStorage.setItem(TRYON_STORAGE_KEY, JSON.stringify(shrunk));
+      }
+    } catch {/* give up — in-memory state remains correct */}
+  }
+}
+
 /* ── Single outfit block (reused in both outfit + multi) ─────────── */
 function OutfitBlock({
   outfit, occasion, vibe, total, budget_note, label, style_notes, lookNumber, onRemoveSlot,
@@ -798,6 +842,64 @@ function OutfitBlock({
   const [shopAdded,     setShopAdded]     = useState(false);
   const [showLookSizer, setShowLookSizer] = useState(false);
   const [lookSizes,     setLookSizes]     = useState<Record<string, string>>({});
+  /* Virtual Try-On modal — opens only when a complete outfit exists */
+  const [tryOnOpen,     setTryOnOpen]     = useState(false);
+  const tryOnOutfit: TryOnOutfitMap = allKeys.reduce((acc, k) => {
+    const it = outfit[k];
+    if (it?.name) {
+      acc[k] = {
+        sku:          it.sku,
+        name:         it.name,
+        price:        it.price,
+        note:         it.note,
+        url:          it.url,
+        img:          it.img ?? null,
+        colors:       it.colors,
+        color_family: it.color_family,
+      };
+    }
+    return acc;
+  }, {} as TryOnOutfitMap);
+
+  /* ── Try-On history (per-outfit, max 2 versions) ───────────── */
+  const tryOnFingerprint = fingerprintOutfit(tryOnOutfit);
+  const [tryOnImages, setTryOnImages] = useState<TryOnEntry[]>([]);
+  // Hydrate history from localStorage when the outfit identity changes
+  useEffect(() => {
+    if (!tryOnFingerprint) { setTryOnImages([]); return; }
+    const all = loadAllTryOnHistory();
+    setTryOnImages(all[tryOnFingerprint] ?? []);
+  }, [tryOnFingerprint]);
+
+  /** Append a new try-on. Slides oldest off when > 2 versions. */
+  const appendTryOnImage = (entry: { imageUrl: string; caption: string }) => {
+    const now = new Date().toISOString();
+    setTryOnImages(prev => {
+      const nextVersion = prev.length === 0 ? 1 : prev[prev.length - 1].version + 1;
+      const newEntry: TryOnEntry = {
+        version:   nextVersion,
+        imageUrl:  entry.imageUrl,
+        caption:   entry.caption,
+        createdAt: now,
+      };
+      const merged = [...prev, newEntry].slice(-TRYON_MAX_VERSIONS);
+      // Persist
+      const all = loadAllTryOnHistory();
+      all[tryOnFingerprint] = merged;
+      // Cap stored outfits (oldest dropped)
+      const keys = Object.keys(all);
+      if (keys.length > TRYON_MAX_OUTFITS) {
+        const trimmed: Record<string, TryOnEntry[]> = {};
+        keys.slice(-TRYON_MAX_OUTFITS).forEach(k => { trimmed[k] = all[k]; });
+        saveAllTryOnHistory(trimmed);
+      } else {
+        saveAllTryOnHistory(all);
+      }
+      return merged;
+    });
+  };
+
+  const hasTryOn = tryOnImages.length > 0;
 
   // All sizable items have a size picked
   const allSizesPicked = sizableKeys.every(k => lookSizes[k]);
@@ -995,28 +1097,102 @@ function OutfitBlock({
               </div>
               <div style={{ color: MUTED, fontSize: 11, marginTop: 2, fontStyle: "italic" }}>{budget_note}</div>
             </div>
-            <button
-              onClick={handleLookCartClick}
-              style={{
-                background: shopAdded ? "#16a34a" : showLookSizer ? ACCENT : ACCENT,
-                color: "#fff", border: "none", borderRadius: 8,
-                padding: "9px 16px", fontSize: 11, fontWeight: 900,
-                cursor: "pointer", fontFamily: "'Courier New',monospace",
-                letterSpacing: 1, whiteSpace: "nowrap",
-                transition: "background 0.2s",
-                display: "flex", alignItems: "center", gap: 6,
-              }}
-            >
-              {shopAdded
-                ? <><Check size={13} /> ADDED TO CART!</>
-                : showLookSizer
-                  ? <>✕ CANCEL</>
-                  : <><ShoppingBag size={13} /> SHOP THE LOOK</>
-              }
-            </button>
+            <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {/* Try-On / View Try-On — only when a complete outfit exists.
+                  When history exists, also shows a thumbnail preview to the LEFT
+                  of the button that opens the same modal in view mode. */}
+              {allKeys.length > 0 && (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {hasTryOn && tryOnImages[tryOnImages.length - 1]?.imageUrl && (
+                    <button
+                      onClick={e => { e.stopPropagation(); setTryOnOpen(true); }}
+                      aria-label="View your virtual try-on"
+                      title="View your try-on"
+                      style={{
+                        position: "relative",
+                        width: 38, height: 38, padding: 0,
+                        borderRadius: 8, overflow: "hidden",
+                        border: `1px solid ${ACCENT}`,
+                        cursor: "pointer", background: "#FFF",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={tryOnImages[tryOnImages.length - 1].imageUrl}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                      <span style={{
+                        position: "absolute", bottom: 1, right: 1,
+                        background: ACCENT, color: "#fff",
+                        fontFamily: "'Courier New',monospace", fontSize: 7, fontWeight: 900,
+                        padding: "1px 4px", borderRadius: 3, letterSpacing: 0.5,
+                      }}>{tryOnImages.length}</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={e => { e.stopPropagation(); setTryOnOpen(true); }}
+                    aria-label={hasTryOn ? "View your virtual try-on" : "Try this look on virtually"}
+                    style={{
+                      background: hasTryOn ? ACCENT : "transparent",
+                      color: hasTryOn ? "#fff" : ACCENT,
+                      border: `1px solid ${ACCENT}`, borderRadius: 8,
+                      padding: "8px 14px", fontSize: 11, fontWeight: 900,
+                      cursor: "pointer", fontFamily: "'Courier New',monospace",
+                      letterSpacing: 1, whiteSpace: "nowrap",
+                      transition: "background 0.2s, color 0.2s",
+                      display: "flex", alignItems: "center", gap: 6,
+                    }}
+                    onMouseEnter={e => {
+                      if (hasTryOn) return;
+                      e.currentTarget.style.background = ACCENT;
+                      e.currentTarget.style.color = "#fff";
+                    }}
+                    onMouseLeave={e => {
+                      if (hasTryOn) return;
+                      e.currentTarget.style.background = "transparent";
+                      e.currentTarget.style.color = ACCENT;
+                    }}
+                  >
+                    <Camera size={13} /> {hasTryOn ? "VIEW TRY-ON" : "TRY IT ON"}
+                  </button>
+                </div>
+              )}
+
+              <button
+                onClick={handleLookCartClick}
+                style={{
+                  background: shopAdded ? "#16a34a" : showLookSizer ? ACCENT : ACCENT,
+                  color: "#fff", border: "none", borderRadius: 8,
+                  padding: "9px 16px", fontSize: 11, fontWeight: 900,
+                  cursor: "pointer", fontFamily: "'Courier New',monospace",
+                  letterSpacing: 1, whiteSpace: "nowrap",
+                  transition: "background 0.2s",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {shopAdded
+                  ? <><Check size={13} /> ADDED TO CART!</>
+                  : showLookSizer
+                    ? <>✕ CANCEL</>
+                    : <><ShoppingBag size={13} /> SHOP THE LOOK</>
+                }
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Virtual Try-On modal — mounted at outfit level so each look
+          has its own modal state. Does not affect outfit data. */}
+      <VirtualTryOnModal
+        open={tryOnOpen}
+        outfit={tryOnOutfit}
+        images={tryOnImages}
+        onClose={() => setTryOnOpen(false)}
+        onNewImage={appendTryOnImage}
+      />
     </div>
   );
 }
