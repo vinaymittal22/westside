@@ -2918,13 +2918,20 @@ export default function LookbookChat() {
         <div ref={bottomRef} />
       </div>
 
-      {/* ═══ INPUT BAR — fixed at bottom, always visible ═════════ */}
+      {/* ═══ INPUT BAR — fixed at bottom, always visible ═════════
+           z-index hierarchy (lowest → highest):
+             20  input bar         (this element)
+             25  sidebar
+             30  header
+             40  misc overlays
+             80  Virtual Try-On modal — MUST sit above input bar
+           Keep input bar low so modal popups are never hidden behind it. */}
       <div className="bt-input-bar" style={{
         position: "fixed",
         bottom: 0,
         left: 0,
         width: "100%",
-        zIndex: 1000,
+        zIndex: 20,
         background: BG,
         borderTop: `1px solid ${BORDER}`,
         padding: "16px 20px 20px",

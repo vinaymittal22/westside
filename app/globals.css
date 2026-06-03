@@ -78,13 +78,15 @@ body {
   .chip-row::-webkit-scrollbar { display: none; }
 }
 
-/* ── INPUT BAR — always fixed at bottom ─────────────────────── */
+/* ── INPUT BAR — always fixed at bottom ───────────────────────
+   z-index kept low (20) so modal popups (Virtual Try-On at 80,
+   sidebar at 50, backdrop at 45) sit above it on every viewport. */
 .bt-input-bar {
   position: fixed !important;
   bottom: 0;
   left: 0;
   width: 100%;
-  z-index: 1000;
+  z-index: 20;
   background: var(--cream);
   border-top: 1px solid var(--line);
 }
